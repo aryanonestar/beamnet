@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>BEAM-NET | Broadcaster Terminal</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&amp;family=JetBrains+Mono:wght@500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "surface-bright": "#39393b",
+                        "surface": "#131315",
+                        "surface-container-lowest": "#0e0e10",
+                        "on-secondary-fixed": "#002113",
+                        "on-error": "#690005",
+                        "on-secondary-container": "#00311f",
+                        "inverse-primary": "#00687a",
+                        "tertiary": "#c0c1ff",
+                        "on-error-container": "#ffdad6",
+                        "primary-fixed-dim": "#4cd7f6",
+                        "secondary-container": "#00a572",
+                        "background": "#131315",
+                        "secondary-fixed": "#6ffbbe",
+                        "tertiary-container": "#9a9dff",
+                        "error-container": "#93000a",
+                        "on-primary-container": "#00424f",
+                        "on-background": "#e5e1e4",
+                        "on-primary": "#003640",
+                        "tertiary-fixed": "#e1e0ff",
+                        "tertiary-fixed-dim": "#c0c1ff",
+                        "outline": "#869397",
+                        "primary-container": "#06b6d4",
+                        "on-tertiary-fixed": "#07006c",
+                        "on-primary-fixed-variant": "#004e5c",
+                        "on-surface": "#e5e1e4",
+                        "on-primary-fixed": "#001f26",
+                        "on-surface-variant": "#bcc9cd",
+                        "surface-container-high": "#2a2a2c",
+                        "outline-variant": "#3d494c",
+                        "surface-container-highest": "#353437",
+                        "on-tertiary-container": "#211cb4",
+                        "inverse-on-surface": "#313032",
+                        "on-tertiary": "#1000a9",
+                        "secondary-fixed-dim": "#4edea3",
+                        "inverse-surface": "#e5e1e4",
+                        "on-tertiary-fixed-variant": "#2f2ebe",
+                        "error": "#ffb4ab",
+                        "surface-container": "#201f22",
+                        "secondary": "#4edea3",
+                        "surface-dim": "#131315",
+                        "on-secondary": "#003824",
+                        "on-secondary-fixed-variant": "#005236",
+                        "surface-container-low": "#1c1b1d",
+                        "primary-fixed": "#acedff",
+                        "surface-variant": "#353437",
+                        "primary": "#4cd7f6",
+                        "surface-tint": "#4cd7f6"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0px",
+                        "lg": "0px",
+                        "xl": "0px",
+                        "full": "0px"
+                    },
+                    "spacing": {
+                        "gutter": "16px",
+                        "unit": "4px",
+                        "container-max": "1440px",
+                        "margin-mobile": "16px",
+                        "margin-desktop": "32px"
+                    },
+                    "fontFamily": {
+                        "display-lg": ["Inter", "sans-serif"],
+                        "label-xs": ["JetBrains Mono", "monospace"],
+                        "data-md": ["JetBrains Mono", "monospace"],
+                        "data-lg": ["JetBrains Mono", "monospace"],
+                        "body-sm": ["Inter", "sans-serif"],
+                        "headline-md": ["Inter", "sans-serif"]
+                    },
+                    "fontSize": {
+                        "display-lg": ["48px", { "lineHeight": "1.1", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "label-xs": ["11px", { "lineHeight": "1", "letterSpacing": "0.1em", "fontWeight": "600" }],
+                        "data-md": ["18px", { "lineHeight": "1.4", "fontWeight": "500" }],
+                        "data-lg": ["32px", { "lineHeight": "1", "letterSpacing": "-0.05em", "fontWeight": "500" }],
+                        "body-sm": ["14px", { "lineHeight": "1.5", "fontWeight": "400" }],
+                        "headline-md": ["24px", { "lineHeight": "1.2", "letterSpacing": "-0.01em", "fontWeight": "600" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .cyber-glow { box-shadow: 0 0 12px rgba(76, 215, 246, 0.2); }
+        .cyber-glow-emerald { box-shadow: 0 0 12px rgba(78, 222, 163, 0.2); }
+        .scanline {
+            background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.1) 50%, rgba(0,0,0,0.1));
+            background-size: 100% 4px;
+        }
+        
+        /* Custom Range Slider */
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 8px;
+            background: #4cd7f6;
+            cursor: pointer;
+            border-radius: 0;
+            box-shadow: 0 0 8px rgba(76, 215, 246, 0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: #353437;
+        }
+        input[type=range]:focus { outline: none; }
+    </style>
+</head>
+<body class="bg-background text-on-background font-body-sm min-h-screen flex flex-col antialiased selection:bg-primary/30 selection:text-primary scanline relative">
+<!-- JSON Component: TopAppBar -->
+<header class="fixed flex justify-between items-center w-full px-margin-desktop h-16 bg-surface border-b border-outline-variant z-50 top-0">
+<div class="flex items-center gap-6">
+<h1 class="text-headline-md font-headline-md font-bold text-primary tracking-tighter uppercase">BEAM-NET</h1>
+<!-- Added Status Pill per prompt request -->
+<div class="hidden sm:flex border border-secondary bg-secondary/10 px-2 py-1 items-center gap-2 cyber-glow-emerald">
+<div class="w-1.5 h-1.5 bg-secondary animate-pulse"></div>
+<span class="font-label-xs text-label-xs text-secondary uppercase">OFFLINE</span>
+</div>
+</div>
+<nav class="hidden md:flex items-center h-full gap-2">
+<!-- Active Navigation -->
+<a class="text-primary border-b-2 border-primary py-4 px-2 font-label-xs text-label-xs uppercase tracking-widest hover:bg-surface-bright/10 hover:text-primary transition-colors flex items-center h-full active:scale-95 duration-75" href="#">
+                Broadcaster
+            </a>
+<!-- Inactive Navigation -->
+<a class="text-on-surface-variant py-4 px-2 font-label-xs text-label-xs uppercase tracking-widest hover:bg-surface-bright/10 hover:text-primary transition-colors flex items-center h-full active:scale-95 duration-75" href="#">
+                Collector
+            </a>
+</nav>
+<div class="flex items-center gap-4">
+<button aria-label="Sensors Off" class="text-on-surface-variant hover:text-primary transition-colors active:scale-95 duration-75 group">
+<span class="material-symbols-outlined text-[24px] group-hover:drop-shadow-[0_0_8px_rgba(76,215,246,0.5)]">sensors_off</span>
+</button>
+<button aria-label="Account" class="text-on-surface-variant hover:text-primary transition-colors active:scale-95 duration-75 group">
+<span class="material-symbols-outlined text-[24px] group-hover:drop-shadow-[0_0_8px_rgba(76,215,246,0.5)]">account_circle</span>
+</button>
+</div>
+</header>
+<!-- Main Content Area -->
+<main class="pt-[80px] p-margin-mobile md:p-margin-desktop max-w-container-max w-full mx-auto flex-1 flex flex-col gap-gutter pb-[100px]">
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-gutter flex-1">
+<!-- Left Panel: Source File -->
+<section class="lg:col-span-5 flex flex-col gap-gutter">
+<div class="bg-surface border border-outline-variant p-4 h-full flex flex-col">
+<header class="flex justify-between items-center mb-6 pb-2 border-b border-outline-variant">
+<h2 class="font-label-xs text-label-xs text-on-surface-variant uppercase tracking-widest">Source File</h2>
+<span class="material-symbols-outlined text-outline-variant text-[16px]">folder_data</span>
+</header>
+<!-- Dropzone -->
+<div class="border border-dashed border-outline-variant bg-surface-container-lowest h-48 mb-6 flex flex-col items-center justify-center gap-3 cursor-pointer group hover:border-solid hover:border-primary transition-all relative overflow-hidden">
+<div class="absolute inset-0 bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+<span class="material-symbols-outlined text-4xl text-outline group-hover:text-primary transition-colors z-10">upload_file</span>
+<p class="font-label-xs text-label-xs text-on-surface-variant group-hover:text-primary transition-colors z-10">DRAG &amp; DROP SECURE PAYLOAD HERE</p>
+<p class="font-label-xs text-[9px] text-outline-variant mt-1 z-10">Supported: PDF, PNG, JPG, MP4, DOCX, ZIP (Max 2MB)</p>
+</div>
+<!-- Stats Grid -->
+<div class="grid grid-cols-2 gap-4 mb-8">
+<div class="border border-outline-variant bg-surface-container-lowest p-3 flex flex-col justify-between">
+<span class="font-label-xs text-label-xs text-outline-variant uppercase">Original Size</span>
+<span class="font-data-md text-data-md text-on-surface mt-2">1.8 MB</span>
+</div>
+<div class="border border-outline-variant bg-surface-container-lowest p-3 flex flex-col justify-between border-b-2 border-b-secondary">
+<span class="font-label-xs text-label-xs text-outline-variant uppercase">Compressed</span>
+<span class="font-data-md text-data-md text-secondary mt-2">420 KB</span>
+</div>
+</div>
+<div class="flex-1"></div>
+<!-- Action Buttons -->
+<div class="flex flex-col gap-3">
+<button class="w-full bg-primary text-on-primary font-label-xs text-label-xs uppercase tracking-widest py-4 border border-primary hover:bg-primary/90 hover:border-primary-fixed-dim transition-all active:scale-[0.98] cyber-glow flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-[18px]">cell_tower</span>
+                            Start Transmission
+                        </button>
+<button class="w-full bg-transparent border border-outline-variant text-on-surface font-label-xs text-label-xs uppercase tracking-widest py-3 hover:bg-surface-bright/10 hover:border-outline transition-all active:scale-[0.98] flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-[18px]">pause</span>
+                            Pause
+                        </button>
+</div>
+</div>
+</section>
+<!-- Right Panel: Optical Payload -->
+<section class="lg:col-span-7 flex flex-col">
+<div class="bg-surface border border-outline-variant p-4 h-full flex flex-col relative overflow-hidden">
+<!-- Decorative corner accents -->
+<div class="absolute top-0 left-0 w-2 h-2 border-t border-l border-outline"></div>
+<div class="absolute top-0 right-0 w-2 h-2 border-t border-r border-outline"></div>
+<div class="absolute bottom-0 left-0 w-2 h-2 border-b border-l border-outline"></div>
+<div class="absolute bottom-0 right-0 w-2 h-2 border-b border-r border-outline"></div>
+<header class="flex justify-between items-center mb-6 pb-2 border-b border-outline-variant gap-4">
+<h2 class="font-label-xs text-label-xs text-on-surface-variant uppercase tracking-widest flex items-center gap-2">
+<span class="w-2 h-2 bg-secondary inline-block"></span>
+                            Optical Payload
+                        </h2>
+<span class="font-data-md text-data-md text-secondary animate-pulse whitespace-nowrap">BROADCASTING AT 8 FPS</span>
+</header>
+<!-- Canvas Area -->
+<div class="flex-1 flex items-center justify-center bg-surface-container-lowest border border-outline-variant relative p-8">
+<div class="absolute top-4 left-4 font-label-xs text-[10px] text-outline-variant">X: 42.11 Y: 99.04</div>
+<div class="absolute bottom-4 right-4 font-label-xs text-[10px] text-outline-variant">SEQ: 00892</div>
+<!-- The QR "Canvas" -->
+<div class="w-[300px] h-[300px] sm:w-[400px] sm:h-[400px] bg-white border-2 border-black flex items-center justify-center relative p-4 shadow-[0_0_30px_rgba(255,255,255,0.1)]">
+<!-- Simulated QR Pattern via pure CSS Grid to avoid image loading -->
+<div class="w-full h-full grid grid-cols-[repeat(21,1fr)] grid-rows-[repeat(21,1fr)] gap-0 bg-white p-2">
+<!-- Finder Pattern Top Left -->
+<div class="col-start-1 row-start-1 col-span-7 row-span-7 bg-black p-[1fr]">
+<div class="w-full h-full bg-white p-[1fr]">
+<div class="w-full h-full bg-black"></div>
+</div>
+</div>
+<!-- Finder Pattern Top Right -->
+<div class="col-start-15 row-start-1 col-span-7 row-span-7 bg-black p-[1fr]">
+<div class="w-full h-full bg-white p-[1fr]">
+<div class="w-full h-full bg-black"></div>
+</div>
+</div>
+<!-- Finder Pattern Bottom Left -->
+<div class="col-start-1 row-start-15 col-span-7 row-span-7 bg-black p-[1fr]">
+<div class="w-full h-full bg-white p-[1fr]">
+<div class="w-full h-full bg-black"></div>
+</div>
+</div>
+<!-- Alignment Pattern -->
+<div class="col-start-14 row-start-14 col-span-5 row-span-5 bg-black p-[1fr]">
+<div class="w-full h-full bg-white p-[1fr]">
+<div class="w-full h-full bg-black"></div>
+</div>
+</div>
+<!-- Random Data Modules -->
+<div class="col-start-8 row-start-1 bg-black"></div>
+<div class="col-start-10 row-start-2 bg-black"></div>
+<div class="col-start-12 row-start-4 bg-black"></div>
+<div class="col-start-9 row-start-9 col-span-4 row-span-2 bg-black"></div>
+<div class="col-start-1 row-start-8 col-span-21 row-span-1 bg-black/20"></div>
+<div class="col-start-8 row-start-1 col-span-1 row-span-21 bg-black/20"></div>
+</div>
+<!-- Scanning Laser Line Effect -->
+<div class="absolute left-0 right-0 h-1 bg-primary/80 top-1/2 blur-[2px] w-full mix-blend-difference animate-[ping_2s_ease-in-out_infinite]"></div>
+</div>
+</div>
+</div>
+</section>
+</div>
+</main>
+<!-- Footer Controls -->
+<footer class="fixed bottom-0 left-0 w-full bg-surface border-t border-outline-variant p-4 z-40">
+<div class="max-w-container-max mx-auto w-full grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
+<!-- FPS Slider -->
+<div class="md:col-span-3 flex flex-col gap-2">
+<div class="flex justify-between items-center">
+<span class="font-label-xs text-label-xs text-on-surface-variant uppercase">FPS Control</span>
+<span class="font-data-md text-data-md text-primary">8.0</span>
+</div>
+<input class="w-full appearance-none bg-surface-container-highest h-1 rounded-none outline-none" max="12" min="3" type="range" value="8"/>
+<div class="flex justify-between font-label-xs text-[9px] text-outline-variant">
+<span>3 MIN</span>
+<span>12 MAX</span>
+</div>
+</div>
+<!-- Toggle -->
+<div class="md:col-span-2 flex items-center justify-between border border-outline-variant px-3 py-2 bg-surface-container-lowest">
+<span class="font-label-xs text-label-xs text-on-surface-variant uppercase">Max Brightness</span>
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox" value=""/>
+<div class="w-9 h-5 bg-surface-variant peer-focus:outline-none peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-on-surface after:border-outline-variant after:border after:h-4 after:w-4 after:transition-all peer-checked:bg-primary rounded-none shadow-[0_0_8px_rgba(76,215,246,0.3)]"></div>
+</label>
+</div>
+<!-- Progress Bar -->
+<div class="md:col-span-7 flex flex-col gap-2">
+<div class="flex justify-between items-end">
+<div class="flex flex-col">
+<span class="font-label-xs text-label-xs text-on-surface-variant uppercase mb-1">Transmission Progress</span>
+<span class="font-data-md text-data-md text-on-surface">Chunk 245 of 450</span>
+</div>
+<span class="font-data-md text-data-md text-primary drop-shadow-[0_0_4px_rgba(76,215,246,0.5)]">54.4%</span>
+</div>
+<div class="w-full bg-surface-container-highest h-1.5 border border-outline-variant/30">
+<div class="bg-primary h-full w-[54.4%] relative overflow-hidden cyber-glow">
+<!-- Striped progress effect inside the bar -->
+<div class="absolute inset-0 w-full h-full bg-[linear-gradient(45deg,rgba(0,0,0,0.1)_25%,transparent_25%,transparent_50%,rgba(0,0,0,0.1)_50%,rgba(0,0,0,0.1)_75%,transparent_75%,transparent)] bg-[length:16px_16px]"></div>
+</div>
+</div>
+</div>
+</div>
+</footer>
+</body></html>
