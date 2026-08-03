@@ -61,10 +61,15 @@ export default function Receiver() {
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();
       const videoDevices = devices.filter((d) => d.kind === "videoinput");
-      setCameras(videoDevices);
-      if (videoDevices.length > 0 && !selectedCameraId) {
-        const rear = videoDevices.find((d) => /back|rear|environment/i.test(d.label));
-        setSelectedCameraId(rear?.deviceId ?? videoDevices[0].deviceId);
+      // Sort: rear/back/environment cameras first so they auto-select by default
+      const sorted = [
+        ...videoDevices.filter((d) => /back|rear|environment/i.test(d.label)),
+        ...videoDevices.filter((d) => !/back|rear|environment/i.test(d.label)),
+      ];
+      setCameras(sorted);
+      if (sorted.length > 0 && !selectedCameraId) {
+        // Always prefer rear camera (first in sorted list)
+        setSelectedCameraId(sorted[0].deviceId);
       }
     } catch {
       /* ignore */
@@ -240,21 +245,34 @@ export default function Receiver() {
 
     isScanningRef.current = true;
 
+    // ── Helper: schedule next frame (guarantees loop never dies) ──────────
+    const scheduleNextScan = () => {
+      if (!isScanningRef.current) return;
+      const targetVideo = videoRef.current;
+      if (targetVideo && "requestVideoFrameCallback" in targetVideo) {
+        (targetVideo as unknown as { requestVideoFrameCallback: (cb: () => void) => number }).requestVideoFrameCallback(processNextFrame);
+      } else {
+        animRef.current = requestAnimationFrame(processNextFrame);
+      }
+    };
+
     const processNextFrame = () => {
       if (!isScanningRef.current) return;
 
       const video = videoRef.current;
-      if (
-        video &&
-        previewCanvas &&
-        previewCtx &&
-        video.readyState >= 2 &&
-        video.videoWidth > 0 &&
-        video.videoHeight > 0
-      ) {
-        const vw = video.videoWidth, vh = video.videoHeight;
 
-        try {
+      try {
+        if (
+          video &&
+          previewCanvas &&
+          previewCtx &&
+          video.readyState >= 2 &&
+          video.videoWidth > 0 &&
+          video.videoHeight > 0
+        ) {
+          const vw = video.videoWidth;
+          const vh = video.videoHeight;
+
           // A. Always render live video feed for smooth viewfinder
           if (previewCanvas.width !== vw || previewCanvas.height !== vh) {
             previewCanvas.width = vw;
@@ -267,11 +285,17 @@ export default function Receiver() {
           if (now - lastScanTimeRef.current >= 100) {
             lastScanTimeRef.current = now;
 
-            // Draw downscaled 320x320 frame
-            offCtx.drawImage(video, 0, 0, DECODE_WIDTH, DECODE_HEIGHT);
+            // CRITICAL FIX: 8-param drawImage — explicit source rect (full videoWidth x videoHeight)
+            // mapped cleanly to target 320x320, prevents squish/distortion artifacts
+            offCtx.drawImage(
+              video,
+              0, 0, vw, vh,          // Source: full camera frame
+              0, 0, DECODE_WIDTH, DECODE_HEIGHT  // Destination: 320x320 decode canvas
+            );
             const imageData = offCtx.getImageData(0, 0, DECODE_WIDTH, DECODE_HEIGHT);
 
-            if (imageData && imageData.data.length > 0) {
+            // Validate pixel array is exactly 320*320*4 bytes before passing to jsQR
+            if (imageData && imageData.data.length === DECODE_WIDTH * DECODE_HEIGHT * 4) {
               const code = jsQR(imageData.data, DECODE_WIDTH, DECODE_HEIGHT, {
                 inversionAttempts: "dontInvert",
               });
@@ -344,27 +368,17 @@ export default function Receiver() {
               }
             }
           }
-        } catch (err) {
-          console.warn("Scan frame warning:", err);
         }
-      }
-
-      // Schedule next frame check using requestVideoFrameCallback if available, fallback to rAF
-      const targetVideo = videoRef.current;
-      if (targetVideo && "requestVideoFrameCallback" in targetVideo) {
-        (targetVideo as unknown as { requestVideoFrameCallback: (cb: () => void) => number }).requestVideoFrameCallback(processNextFrame);
-      } else {
-        animRef.current = requestAnimationFrame(processNextFrame);
+      } catch (err) {
+        console.warn("Non-fatal frame error:", err);
+      } finally {
+        // GUARANTEE: loop keeps running unconditionally — errors CANNOT kill it
+        scheduleNextScan();
       }
     };
 
     // Kick off loop
-    const targetVideo = videoRef.current;
-    if (targetVideo && "requestVideoFrameCallback" in targetVideo) {
-      (targetVideo as unknown as { requestVideoFrameCallback: (cb: () => void) => number }).requestVideoFrameCallback(processNextFrame);
-    } else {
-      animRef.current = requestAnimationFrame(processNextFrame);
-    }
+    scheduleNextScan();
 
     return () => {
       isScanningRef.current = false;
