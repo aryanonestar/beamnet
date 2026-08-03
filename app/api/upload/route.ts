@@ -10,6 +10,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       onBeforeGenerateToken: async () => ({
         allowedContentTypes: ['*/*'],
         maximumSizeInBytes: 50 * 1024 * 1024, // 50 MB limit
+        addRandomSuffix: true, // Prevents duplicate filename collision errors
       }),
       onUploadCompleted: async ({ blob }) => {
         console.log('Vercel Blob upload completed:', blob.url);

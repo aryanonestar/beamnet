@@ -13,18 +13,20 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     const token = process.env.BLOB_READ_WRITE_TOKEN;
     
-    // Put file with public access so it generates a global HTTPS CDN URL downloadable on mobile phones
+    // Put file with addRandomSuffix: true to prevent filename collisions
     let blob;
     try {
       blob = await put(filename, file, {
         access: "public",
         token,
+        addRandomSuffix: true,
       });
     } catch {
       // Fallback if store requires private access
       blob = await put(filename, file, {
         access: "private",
         token,
+        addRandomSuffix: true,
       });
     }
 
