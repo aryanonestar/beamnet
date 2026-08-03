@@ -8,9 +8,9 @@ import CompletionModal from "@/components/CompletionModal";
 import Link from "next/link";
 import { KeyRound, Camera, Download, AlertCircle, Loader2, Zap, Clock, Activity, Layers } from "lucide-react";
 
-/** Ultra-fast 320x320 downscaled decode canvas reduces pixel data array size by 75% for <5ms jsQR decoding */
-const DECODE_WIDTH = 320;
-const DECODE_HEIGHT = 320;
+/** 480x480 decode canvas: larger canvas detects dense/small QR codes jsQR misses at 320x320 */
+const DECODE_WIDTH = 480;
+const DECODE_HEIGHT = 480;
 
 export default function Receiver() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -269,24 +269,24 @@ export default function Receiver() {
           const vw = video.videoWidth;
           const vh = video.videoHeight;
 
-          // Throttle jsQR decoding to max 10 FPS (every 100ms) on downscaled 320x320 offscreen canvas
-          // NOTE: video element itself is visible in the DOM — no canvas preview copy needed
+          // 15 FPS throttle (66ms) — faster than broadcaster's 8 FPS so no frames are skipped
           const now = performance.now();
-          if (now - lastScanTimeRef.current >= 100) {
+          if (now - lastScanTimeRef.current >= 66) {
             lastScanTimeRef.current = now;
 
-            // 8-param drawImage: explicit source rect → clean scale to 320x320 (no squish)
+            // 8-param drawImage: explicit source rect → clean scale to 480x480 (no squish)
             offCtx.drawImage(
               video,
               0, 0, vw, vh,                         // Source: full camera frame
-              0, 0, DECODE_WIDTH, DECODE_HEIGHT       // Destination: 320x320 decode canvas
+              0, 0, DECODE_WIDTH, DECODE_HEIGHT       // Destination: 480x480 decode canvas
             );
             const imageData = offCtx.getImageData(0, 0, DECODE_WIDTH, DECODE_HEIGHT);
 
-            // Validate pixel array is exactly 320*320*4 bytes before passing to jsQR
+            // Validate pixel array is exactly 480*480*4 bytes before passing to jsQR
             if (imageData && imageData.data.length === DECODE_WIDTH * DECODE_HEIGHT * 4) {
               const code = jsQR(imageData.data, DECODE_WIDTH, DECODE_HEIGHT, {
-                inversionAttempts: "dontInvert",
+                // attemptBoth: detects normal AND inverted QR codes (critical for screen glare/inversion)
+                inversionAttempts: "attemptBoth",
               });
 
               // FPS tracking
