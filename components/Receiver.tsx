@@ -14,7 +14,7 @@ const DECODE_HEIGHT = 320;
 
 export default function Receiver() {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const previewCanvasRef = useRef<HTMLCanvasElement>(null);
+  // previewCanvasRef removed: <video> itself is the visible viewfinder (Android requires visible video for frame decoding)
   const offscreenRef = useRef<HTMLCanvasElement | null>(null);
   const animRef = useRef<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -233,14 +233,12 @@ export default function Receiver() {
     return () => clearInterval(uiInterval);
   }, [activeTab, permissionGranted]);
 
-  // ── Decoupled Smooth Viewfinder & 320px Throttled 10 FPS Scanner Loop ──
+  // ── 320px Throttled 10 FPS Scanner Loop (video is visible viewfinder) ──
   useEffect(() => {
     if (activeTab !== "camera" || !permissionGranted) return;
 
     const offscreen = offscreenRef.current;
     const offCtx = offscreen?.getContext("2d", { willReadFrequently: true });
-    const previewCanvas = previewCanvasRef.current;
-    const previewCtx = previewCanvas?.getContext("2d");
     if (!offscreen || !offCtx) return;
 
     isScanningRef.current = true;
@@ -264,8 +262,6 @@ export default function Receiver() {
       try {
         if (
           video &&
-          previewCanvas &&
-          previewCtx &&
           video.readyState >= 2 &&
           video.videoWidth > 0 &&
           video.videoHeight > 0
@@ -273,24 +269,17 @@ export default function Receiver() {
           const vw = video.videoWidth;
           const vh = video.videoHeight;
 
-          // A. Always render live video feed for smooth viewfinder
-          if (previewCanvas.width !== vw || previewCanvas.height !== vh) {
-            previewCanvas.width = vw;
-            previewCanvas.height = vh;
-          }
-          previewCtx.drawImage(video, 0, 0, vw, vh);
-
-          // B. Throttle jsQR decoding to max 10 FPS (every 100ms) on downscaled 320x320 canvas
+          // Throttle jsQR decoding to max 10 FPS (every 100ms) on downscaled 320x320 offscreen canvas
+          // NOTE: video element itself is visible in the DOM — no canvas preview copy needed
           const now = performance.now();
           if (now - lastScanTimeRef.current >= 100) {
             lastScanTimeRef.current = now;
 
-            // CRITICAL FIX: 8-param drawImage — explicit source rect (full videoWidth x videoHeight)
-            // mapped cleanly to target 320x320, prevents squish/distortion artifacts
+            // 8-param drawImage: explicit source rect → clean scale to 320x320 (no squish)
             offCtx.drawImage(
               video,
-              0, 0, vw, vh,          // Source: full camera frame
-              0, 0, DECODE_WIDTH, DECODE_HEIGHT  // Destination: 320x320 decode canvas
+              0, 0, vw, vh,                         // Source: full camera frame
+              0, 0, DECODE_WIDTH, DECODE_HEIGHT       // Destination: 320x320 decode canvas
             );
             const imageData = offCtx.getImageData(0, 0, DECODE_WIDTH, DECODE_HEIGHT);
 
@@ -501,6 +490,8 @@ export default function Receiver() {
                     onClick={() => videoRef.current?.play().catch(() => {})}
                     className="flex-1 bg-[#0e0e10] border border-[#3d494c] relative overflow-hidden flex items-center justify-center min-h-[380px] cursor-pointer"
                   >
+                    {/* ANDROID FIX: video must be fully visible in DOM for Android Chrome to decode frames.
+                        Using opacity:0 or display:none or 1x1px causes black/frozen feed on Android. */}
                     <video
                       ref={videoRef}
                       autoPlay
@@ -508,9 +499,8 @@ export default function Receiver() {
                       muted
                       onCanPlay={() => videoRef.current?.play().catch(() => {})}
                       onLoadedMetadata={() => videoRef.current?.play().catch(() => {})}
-                      style={{ opacity: 0, position: 'absolute', pointerEvents: 'none', width: '1px', height: '1px' }}
+                      className="w-full h-full object-cover"
                     />
-                    <canvas ref={previewCanvasRef} className="w-full h-full object-cover" />
 
                     {!permissionGranted && !cameraError && (
                       <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[#0e0e10] p-6 text-center">
