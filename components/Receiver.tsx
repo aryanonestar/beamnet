@@ -237,99 +237,110 @@ export default function Receiver() {
     isScanningRef.current = true;
 
     const processNextFrame = () => {
-      if (!isScanningRef.current) return;
-
-      const video = videoRef.current;
-      if (video && video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
-        const vw = video.videoWidth, vh = video.videoHeight;
-
-        try {
-          if (previewCanvas && previewCtx) {
-            if (previewCanvas.width !== vw || previewCanvas.height !== vh) {
-              previewCanvas.width = vw;
-              previewCanvas.height = vh;
-            }
-            previewCtx.drawImage(video, 0, 0, vw, vh);
-          }
-
-          // Offscreen 480p downscaled draw
-          offCtx.drawImage(video, 0, 0, DECODE_WIDTH, DECODE_HEIGHT);
-          const imageData = offCtx.getImageData(0, 0, DECODE_WIDTH, DECODE_HEIGHT);
-          const code = jsQR(imageData.data, DECODE_WIDTH, DECODE_HEIGHT, { inversionAttempts: "dontInvert" });
-
-          // FPS tracking
-          frameCountRef.current++;
-          const now = Date.now();
-          if (now - lastFpsTimeRef.current >= 1000) {
-            setScanFps(frameCountRef.current);
-            frameCountRef.current = 0;
-            lastFpsTimeRef.current = now;
-          }
-
-          if (code && code.data && !completedRef.current) {
-            // Direct URL scan (Cloud QR Code)
-            if (code.data.startsWith("http://") || code.data.startsWith("https://")) {
-              completedRef.current = true;
-              setStatusBadge("CLOUD REDIRECT SCANNED");
-              window.location.href = code.data;
-              return;
-            }
-
-            // Optical Chunk scan
-            try {
-              const raw = JSON.parse(code.data);
-              const chunkMeta = raw.meta || raw;
-              const chunkIdx = typeof chunkMeta.chunkIndex === "number" ? chunkMeta.chunkIndex : raw.chunkIndex;
-              const total = typeof chunkMeta.totalChunks === "number" ? chunkMeta.totalChunks : raw.totalChunks;
-              const payloadId = chunkMeta.id || raw.id;
-
-              if (payloadId && typeof chunkIdx === "number" && typeof total === "number") {
-                const chunkObj: Chunk = raw.meta ? raw : { meta: raw, payload: raw.payload };
-
-                if (transmissionIdRef.current !== payloadId) {
-                  transmissionIdRef.current = payloadId;
-                  totalChunksRef.current = total;
-                  chunksMapRef.current.clear();
-                  receivedIndexesRef.current.clear();
-                  setStatusBadge(`RECEIVING DATA STREAM (${total} CHUNKS)`);
-                }
-
-                if (!chunksMapRef.current.has(chunkIdx)) {
-                  chunksMapRef.current.set(chunkIdx, chunkObj);
-                  receivedIndexesRef.current.add(chunkIdx);
-
-                  const currentCount = chunksMapRef.current.size;
-
-                  if (currentCount === total && !completedRef.current) {
-                    completedRef.current = true;
-                    setStatusBadge("UNPACKING PAYLOAD...");
-
-                    const allChunks = Array.from(chunksMapRef.current.values());
-                    reassembleAndUnpack(allChunks)
-                      .then((res) => {
-                        setResult({ ...res, crc32Valid: true });
-                        setShowModal(true);
-                        setStatusBadge("OPTICAL STREAM SYNCED & INTACT");
-                      })
-                      .catch((err) => {
-                        const msg = err instanceof Error ? err.message : "Reassembly failed";
-                        setErrorMsg(msg);
-                        setStatusBadge("PAYLOAD REASSEMBLY ERROR");
-                      });
-                  }
-                }
-              }
-            } catch {
-              /* ignore non-JSON frames */
-            }
-          }
-        } catch (err) {
-          console.warn("Frame parse warning:", err);
-        }
+      // 1. ALWAYS QUEUE NEXT FRAME FIRST at the very top so the loop NEVER dies
+      if (isScanningRef.current) {
+        animRef.current = requestAnimationFrame(processNextFrame);
       }
 
-      // ALWAYS schedule the next frame continuously at 30 FPS
-      animRef.current = requestAnimationFrame(processNextFrame);
+      const video = videoRef.current;
+      // 2. Validate video state and non-zero dimensions
+      if (
+        !video ||
+        !previewCanvas ||
+        !previewCtx ||
+        video.readyState < 2 ||
+        video.videoWidth === 0 ||
+        video.videoHeight === 0
+      ) {
+        return;
+      }
+
+      const vw = video.videoWidth, vh = video.videoHeight;
+
+      // 3. Wrap entire frame extraction and jsQR decoding in a try/catch
+      try {
+        if (previewCanvas.width !== vw || previewCanvas.height !== vh) {
+          previewCanvas.width = vw;
+          previewCanvas.height = vh;
+        }
+        previewCtx.drawImage(video, 0, 0, vw, vh);
+
+        // Offscreen 480p downscaled draw
+        offCtx.drawImage(video, 0, 0, DECODE_WIDTH, DECODE_HEIGHT);
+        const imageData = offCtx.getImageData(0, 0, DECODE_WIDTH, DECODE_HEIGHT);
+        if (!imageData || imageData.data.length === 0) return;
+
+        const code = jsQR(imageData.data, DECODE_WIDTH, DECODE_HEIGHT, { inversionAttempts: "dontInvert" });
+
+        // FPS tracking
+        frameCountRef.current++;
+        const now = Date.now();
+        if (now - lastFpsTimeRef.current >= 1000) {
+          setScanFps(frameCountRef.current);
+          frameCountRef.current = 0;
+          lastFpsTimeRef.current = now;
+        }
+
+        if (code && code.data && !completedRef.current) {
+          // Direct URL scan (Cloud QR Code)
+          if (code.data.startsWith("http://") || code.data.startsWith("https://")) {
+            completedRef.current = true;
+            setStatusBadge("CLOUD REDIRECT SCANNED");
+            window.location.href = code.data;
+            return;
+          }
+
+          // Optical Chunk scan
+          try {
+            const raw = JSON.parse(code.data);
+            const chunkMeta = raw.meta || raw;
+            const chunkIdx = typeof chunkMeta.chunkIndex === "number" ? chunkMeta.chunkIndex : raw.chunkIndex;
+            const total = typeof chunkMeta.totalChunks === "number" ? chunkMeta.totalChunks : raw.totalChunks;
+            const payloadId = chunkMeta.id || raw.id;
+
+            if (payloadId && typeof chunkIdx === "number" && typeof total === "number") {
+              const chunkObj: Chunk = raw.meta ? raw : { meta: raw, payload: raw.payload };
+
+              if (transmissionIdRef.current !== payloadId) {
+                transmissionIdRef.current = payloadId;
+                totalChunksRef.current = total;
+                chunksMapRef.current.clear();
+                receivedIndexesRef.current.clear();
+                setStatusBadge(`RECEIVING DATA STREAM (${total} CHUNKS)`);
+              }
+
+              if (!chunksMapRef.current.has(chunkIdx)) {
+                chunksMapRef.current.set(chunkIdx, chunkObj);
+                receivedIndexesRef.current.add(chunkIdx);
+
+                const currentCount = chunksMapRef.current.size;
+
+                if (currentCount === total && !completedRef.current) {
+                  completedRef.current = true;
+                  setStatusBadge("UNPACKING PAYLOAD...");
+
+                  const allChunks = Array.from(chunksMapRef.current.values());
+                  reassembleAndUnpack(allChunks)
+                    .then((res) => {
+                      setResult({ ...res, crc32Valid: true });
+                      setShowModal(true);
+                      setStatusBadge("OPTICAL STREAM SYNCED & INTACT");
+                    })
+                    .catch((err) => {
+                      const msg = err instanceof Error ? err.message : "Reassembly failed";
+                      setErrorMsg(msg);
+                      setStatusBadge("PAYLOAD REASSEMBLY ERROR");
+                    });
+                }
+              }
+            }
+          } catch {
+            /* ignore non-JSON frames */
+          }
+        }
+      } catch (err) {
+        console.warn("Frame scan skipped due to render exception:", err);
+      }
     };
 
     animRef.current = requestAnimationFrame(processNextFrame);
@@ -457,7 +468,7 @@ export default function Receiver() {
                       autoPlay
                       playsInline
                       muted
-                      className="absolute opacity-0 pointer-events-none w-1 h-1 top-0 left-0"
+                      style={{ opacity: 0, position: 'absolute', pointerEvents: 'none', width: '1px', height: '1px' }}
                     />
                     <canvas ref={previewCanvasRef} className="w-full h-full object-cover" />
 
