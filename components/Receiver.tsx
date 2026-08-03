@@ -219,12 +219,14 @@ export default function Receiver() {
 
     const tick = () => {
       const video = videoRef.current;
-      if (video && video.readyState >= video.HAVE_ENOUGH_DATA) {
+      if (video && video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
         const vw = video.videoWidth, vh = video.videoHeight;
 
-        if (previewCanvas && previewCtx && vw > 0) {
-          previewCanvas.width = vw;
-          previewCanvas.height = vh;
+        if (previewCanvas && previewCtx) {
+          if (previewCanvas.width !== vw || previewCanvas.height !== vh) {
+            previewCanvas.width = vw;
+            previewCanvas.height = vh;
+          }
           previewCtx.drawImage(video, 0, 0, vw, vh);
         }
 
@@ -427,7 +429,13 @@ export default function Receiver() {
                   )}
 
                   <div className="flex-1 bg-[#0e0e10] border border-[#3d494c] relative overflow-hidden flex items-center justify-center min-h-[380px]">
-                    <video ref={videoRef} playsInline muted className="hidden" />
+                    <video
+                      ref={videoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="absolute opacity-0 pointer-events-none w-1 h-1 top-0 left-0"
+                    />
                     <canvas ref={previewCanvasRef} className="w-full h-full object-cover" />
 
                     {!permissionGranted && !cameraError && (
