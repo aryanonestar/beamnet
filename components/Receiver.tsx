@@ -28,19 +28,20 @@ export default function Receiver() {
   const [codeVerifying, setCodeVerifying] = useState(false);
   const [codeError, setCodeError] = useState("");
 
-  // Refs for scan state (0-based chunk tracking)
+  // Persistent Refs for Decoupled Scan Loop (Will NOT trigger re-renders or kill stream)
   const chunksMapRef = useRef<Map<number, Chunk>>(new Map());
+  const receivedIndexesRef = useRef<Set<number>>(new Set());
   const transmissionIdRef = useRef<string | null>(null);
-  const totalChunksRef = useRef<number | null>(null);
+  const totalChunksRef = useRef<number>(0);
   const completedRef = useRef(false);
+  const isScanningRef = useRef<boolean>(false);
 
-  // UI state
+  // UI state (Updated safely via 4Hz throttler or async triggers)
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string>("");
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [cameraError, setCameraError] = useState("");
 
-  // Precise chunk indexing using Set<number>
   const [receivedIndexes, setReceivedIndexes] = useState<Set<number>>(new Set());
   const [totalChunks, setTotalChunks] = useState<number | null>(null);
   const [scanFps, setScanFps] = useState(0);
@@ -86,7 +87,7 @@ export default function Receiver() {
         streamRef.current = stream;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          await videoRef.current.play();
+          await videoRef.current.play().catch(() => {});
         }
         setPermissionGranted(true);
         await enumerateCameras();
@@ -101,6 +102,7 @@ export default function Receiver() {
   );
 
   const stopCamera = useCallback(() => {
+    isScanningRef.current = false;
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
   }, []);
@@ -208,111 +210,132 @@ export default function Receiver() {
     }
   };
 
-  // ── rAF scan loop ──────────────────────────────────────────
+  // ── Throttled UI State Synchronization (4Hz / 250ms) ─────────
   useEffect(() => {
     if (activeTab !== "camera" || !permissionGranted) return;
+
+    const uiInterval = setInterval(() => {
+      if (totalChunksRef.current > 0) {
+        setTotalChunks(totalChunksRef.current);
+        setReceivedIndexes(new Set(receivedIndexesRef.current));
+      }
+    }, 250);
+
+    return () => clearInterval(uiInterval);
+  }, [activeTab, permissionGranted]);
+
+  // ── Decoupled Continuous 30 FPS Camera Sampling Loop ──────────
+  useEffect(() => {
+    if (activeTab !== "camera" || !permissionGranted) return;
+
     const offscreen = offscreenRef.current;
     const offCtx = offscreen?.getContext("2d", { willReadFrequently: true });
     const previewCanvas = previewCanvasRef.current;
     const previewCtx = previewCanvas?.getContext("2d");
     if (!offscreen || !offCtx) return;
 
-    const tick = () => {
+    isScanningRef.current = true;
+
+    const processNextFrame = () => {
+      if (!isScanningRef.current) return;
+
       const video = videoRef.current;
       if (video && video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
         const vw = video.videoWidth, vh = video.videoHeight;
 
-        if (previewCanvas && previewCtx) {
-          if (previewCanvas.width !== vw || previewCanvas.height !== vh) {
-            previewCanvas.width = vw;
-            previewCanvas.height = vh;
-          }
-          previewCtx.drawImage(video, 0, 0, vw, vh);
-        }
-
-        // Offscreen 480p downscaled draw
-        offCtx.drawImage(video, 0, 0, DECODE_WIDTH, DECODE_HEIGHT);
-        const imageData = offCtx.getImageData(0, 0, DECODE_WIDTH, DECODE_HEIGHT);
-        const code = jsQR(imageData.data, DECODE_WIDTH, DECODE_HEIGHT, { inversionAttempts: "dontInvert" });
-
-        // FPS tracking
-        frameCountRef.current++;
-        const now = Date.now();
-        if (now - lastFpsTimeRef.current >= 1000) {
-          setScanFps(frameCountRef.current);
-          frameCountRef.current = 0;
-          lastFpsTimeRef.current = now;
-        }
-
-        if (code && code.data && !completedRef.current) {
-          // Direct URL scan (Cloud QR Code)
-          if (code.data.startsWith("http://") || code.data.startsWith("https://")) {
-            completedRef.current = true;
-            setStatusBadge("CLOUD REDIRECT SCANNED");
-            window.location.href = code.data;
-            return;
+        try {
+          if (previewCanvas && previewCtx) {
+            if (previewCanvas.width !== vw || previewCanvas.height !== vh) {
+              previewCanvas.width = vw;
+              previewCanvas.height = vh;
+            }
+            previewCtx.drawImage(video, 0, 0, vw, vh);
           }
 
-          // Optical Chunk scan
-          try {
-            const raw = JSON.parse(code.data);
-            const chunkMeta = raw.meta || raw;
-            const chunkIdx = typeof chunkMeta.chunkIndex === "number" ? chunkMeta.chunkIndex : raw.chunkIndex;
-            const total = typeof chunkMeta.totalChunks === "number" ? chunkMeta.totalChunks : raw.totalChunks;
-            const payloadId = chunkMeta.id || raw.id;
+          // Offscreen 480p downscaled draw
+          offCtx.drawImage(video, 0, 0, DECODE_WIDTH, DECODE_HEIGHT);
+          const imageData = offCtx.getImageData(0, 0, DECODE_WIDTH, DECODE_HEIGHT);
+          const code = jsQR(imageData.data, DECODE_WIDTH, DECODE_HEIGHT, { inversionAttempts: "dontInvert" });
 
-            if (payloadId && typeof chunkIdx === "number" && typeof total === "number") {
-              const chunkObj: Chunk = raw.meta ? raw : { meta: raw, payload: raw.payload };
+          // FPS tracking
+          frameCountRef.current++;
+          const now = Date.now();
+          if (now - lastFpsTimeRef.current >= 1000) {
+            setScanFps(frameCountRef.current);
+            frameCountRef.current = 0;
+            lastFpsTimeRef.current = now;
+          }
 
-              if (transmissionIdRef.current !== payloadId) {
-                transmissionIdRef.current = payloadId;
-                totalChunksRef.current = total;
-                chunksMapRef.current.clear();
-                setTotalChunks(total);
-                setReceivedIndexes(new Set());
-                setStatusBadge(`RECEIVING DATA STREAM (${total} CHUNKS)`);
-              }
+          if (code && code.data && !completedRef.current) {
+            // Direct URL scan (Cloud QR Code)
+            if (code.data.startsWith("http://") || code.data.startsWith("https://")) {
+              completedRef.current = true;
+              setStatusBadge("CLOUD REDIRECT SCANNED");
+              window.location.href = code.data;
+              return;
+            }
 
-              if (!chunksMapRef.current.has(chunkIdx)) {
-                chunksMapRef.current.set(chunkIdx, chunkObj);
+            // Optical Chunk scan
+            try {
+              const raw = JSON.parse(code.data);
+              const chunkMeta = raw.meta || raw;
+              const chunkIdx = typeof chunkMeta.chunkIndex === "number" ? chunkMeta.chunkIndex : raw.chunkIndex;
+              const total = typeof chunkMeta.totalChunks === "number" ? chunkMeta.totalChunks : raw.totalChunks;
+              const payloadId = chunkMeta.id || raw.id;
 
-                setReceivedIndexes((prev) => {
-                  const next = new Set(prev);
-                  next.add(chunkIdx);
-                  return next;
-                });
+              if (payloadId && typeof chunkIdx === "number" && typeof total === "number") {
+                const chunkObj: Chunk = raw.meta ? raw : { meta: raw, payload: raw.payload };
 
-                const currentCount = chunksMapRef.current.size;
+                if (transmissionIdRef.current !== payloadId) {
+                  transmissionIdRef.current = payloadId;
+                  totalChunksRef.current = total;
+                  chunksMapRef.current.clear();
+                  receivedIndexesRef.current.clear();
+                  setStatusBadge(`RECEIVING DATA STREAM (${total} CHUNKS)`);
+                }
 
-                if (currentCount === total && !completedRef.current) {
-                  completedRef.current = true;
-                  setStatusBadge("UNPACKING PAYLOAD...");
+                if (!chunksMapRef.current.has(chunkIdx)) {
+                  chunksMapRef.current.set(chunkIdx, chunkObj);
+                  receivedIndexesRef.current.add(chunkIdx);
 
-                  const allChunks = Array.from(chunksMapRef.current.values());
-                  reassembleAndUnpack(allChunks)
-                    .then((res) => {
-                      setResult({ ...res, crc32Valid: true });
-                      setShowModal(true);
-                      setStatusBadge("OPTICAL STREAM SYNCED & INTACT");
-                    })
-                    .catch((err) => {
-                      const msg = err instanceof Error ? err.message : "Reassembly failed";
-                      setErrorMsg(msg);
-                      setStatusBadge("PAYLOAD REASSEMBLY ERROR");
-                    });
+                  const currentCount = chunksMapRef.current.size;
+
+                  if (currentCount === total && !completedRef.current) {
+                    completedRef.current = true;
+                    setStatusBadge("UNPACKING PAYLOAD...");
+
+                    const allChunks = Array.from(chunksMapRef.current.values());
+                    reassembleAndUnpack(allChunks)
+                      .then((res) => {
+                        setResult({ ...res, crc32Valid: true });
+                        setShowModal(true);
+                        setStatusBadge("OPTICAL STREAM SYNCED & INTACT");
+                      })
+                      .catch((err) => {
+                        const msg = err instanceof Error ? err.message : "Reassembly failed";
+                        setErrorMsg(msg);
+                        setStatusBadge("PAYLOAD REASSEMBLY ERROR");
+                      });
+                  }
                 }
               }
+            } catch {
+              /* ignore non-JSON frames */
             }
-          } catch {
-            /* ignore non-JSON frames */
           }
+        } catch (err) {
+          console.warn("Frame parse warning:", err);
         }
       }
-      animRef.current = requestAnimationFrame(tick);
+
+      // ALWAYS schedule the next frame continuously at 30 FPS
+      animRef.current = requestAnimationFrame(processNextFrame);
     };
 
-    animRef.current = requestAnimationFrame(tick);
+    animRef.current = requestAnimationFrame(processNextFrame);
+
     return () => {
+      isScanningRef.current = false;
       if (animRef.current) cancelAnimationFrame(animRef.current);
     };
   }, [activeTab, permissionGranted]);
@@ -325,7 +348,7 @@ export default function Receiver() {
 
   return (
     <div
-      className="bg-[#131315] text-[#e5e1e4] min-h-screen flex flex-col antialiased font-[Inter,sans-serif]"
+      className="bg-[#131315] text-[#e5e1e4] min-h-screen pb-36 px-4 flex flex-col antialiased font-[Inter,sans-serif]"
       style={{
         backgroundImage:
           "linear-gradient(to bottom,rgba(255,255,255,0),rgba(255,255,255,0) 50%,rgba(0,0,0,0.08) 50%,rgba(0,0,0,0.08))",
@@ -363,7 +386,7 @@ export default function Receiver() {
       </header>
 
       {/* ── Main ── */}
-      <main className="pt-[80px] px-4 md:px-8 max-w-[1440px] w-full mx-auto flex-1 flex flex-col gap-4 pb-[120px]">
+      <main className="pt-[80px] px-4 md:px-8 max-w-[1440px] w-full mx-auto flex-1 flex flex-col gap-4">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-1 min-h-[600px]">
 
           {/* Left – Camera Feed / Enter Code Panel */}
@@ -653,6 +676,7 @@ export default function Receiver() {
             setShowModal(false);
             completedRef.current = false;
             chunksMapRef.current.clear();
+            receivedIndexesRef.current.clear();
             setReceivedIndexes(new Set());
             setTotalChunks(null);
           }}
