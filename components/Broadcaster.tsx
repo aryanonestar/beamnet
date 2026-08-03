@@ -621,31 +621,31 @@ export default function Broadcaster() {
                       <div className="absolute -inset-1 border border-[#4cd7f6]/30" style={{ boxShadow: "0 0 20px rgba(76,215,246,0.15)" }} />
                     )}
 
-                    {/* QR Image rendering via Data URL */}
-                    {qrDataUrl ? (
-                      /* eslint-disable-next-line @next/next/no-img-element */
-                      <img
-                        src={qrDataUrl}
-                        alt="BEAM-NET Auto Download QR"
-                        width={380}
-                        height={380}
-                        className="block max-w-full h-auto bg-white p-2 border border-[#3d494c]"
-                      />
-                    ) : (
-                      <div className="w-[300px] h-[300px] bg-white border-2 border-black flex items-center justify-center p-4">
-                        <div className="w-full h-full grid grid-cols-[repeat(21,1fr)] grid-rows-[repeat(21,1fr)] bg-white">
-                          <div className="col-start-1 row-start-1 col-span-7 row-span-7 bg-black p-[1fr]">
-                            <div className="w-full h-full bg-white p-[1fr]"><div className="w-full h-full bg-black" /></div>
-                          </div>
-                          <div className="col-start-15 row-start-1 col-span-7 row-span-7 bg-black p-[1fr]">
-                            <div className="w-full h-full bg-white p-[1fr]"><div className="w-full h-full bg-black" /></div>
-                          </div>
-                          <div className="col-start-1 row-start-15 col-span-7 row-span-7 bg-black p-[1fr]">
-                            <div className="w-full h-full bg-white p-[1fr]"><div className="w-full h-full bg-black" /></div>
+                    {/* QR Image rendering via Data URL with responsive mobile sizing */}
+                    <div className="w-full max-w-[85vw] sm:max-w-xs aspect-square mx-auto my-4 flex items-center justify-center">
+                      {qrDataUrl ? (
+                        /* eslint-disable-next-line @next/next/no-img-element */
+                        <img
+                          src={qrDataUrl}
+                          alt="BEAM-NET Auto Download QR"
+                          className="w-full h-full object-contain rounded-lg shadow-2xl border-2 border-[#3d494c] bg-white p-2"
+                        />
+                      ) : (
+                        <div className="w-[300px] h-[300px] bg-white border-2 border-black flex items-center justify-center p-4">
+                          <div className="w-full h-full grid grid-cols-[repeat(21,1fr)] grid-rows-[repeat(21,1fr)] bg-white">
+                            <div className="col-start-1 row-start-1 col-span-7 row-span-7 bg-black p-[1fr]">
+                              <div className="w-full h-full bg-white p-[1fr]"><div className="w-full h-full bg-black" /></div>
+                            </div>
+                            <div className="col-start-15 row-start-1 col-span-7 row-span-7 bg-black p-[1fr]">
+                              <div className="w-full h-full bg-white p-[1fr]"><div className="w-full h-full bg-black" /></div>
+                            </div>
+                            <div className="col-start-1 row-start-15 col-span-7 row-span-7 bg-black p-[1fr]">
+                              <div className="w-full h-full bg-white p-[1fr]"><div className="w-full h-full bg-black" /></div>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    )}
+                      )}
+                    </div>
 
                     {/* Laser scan effect while playing */}
                     {playing && (
@@ -657,6 +657,16 @@ export default function Broadcaster() {
             </div>
           </section>
         </div>
+
+        {/* Made with ❤️ Footer */}
+        <footer className="mt-12 mb-8 py-6 text-center border-t border-[#3d494c]/60 w-full max-w-[1440px] mx-auto">
+          <p className="text-xs font-mono text-[#869397] flex items-center justify-center gap-1">
+            Made with <span className="text-red-500">❤️</span> • Free & Open Source Air-Gapped Tool
+          </p>
+          <p className="text-[10px] font-mono text-[#3d494c] mt-1">
+            BEAM-NET v1.0 • Hybrid Optical Transfer
+          </p>
+        </footer>
       </main>
 
       {/* ── Footer Controls ── */}

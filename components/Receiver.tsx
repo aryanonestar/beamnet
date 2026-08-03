@@ -625,6 +625,16 @@ export default function Receiver() {
             </div>
           </section>
         </div>
+
+        {/* Made with ❤️ Footer */}
+        <footer className="mt-12 mb-8 py-6 text-center border-t border-[#3d494c]/60 w-full max-w-[1440px] mx-auto">
+          <p className="text-xs font-mono text-[#869397] flex items-center justify-center gap-1">
+            Made with <span className="text-red-500">❤️</span> • Free & Open Source Air-Gapped Tool
+          </p>
+          <p className="text-[10px] font-mono text-[#3d494c] mt-1">
+            BEAM-NET v1.0 • Hybrid Optical Transfer
+          </p>
+        </footer>
       </main>
 
       {/* Completion Modal */}
