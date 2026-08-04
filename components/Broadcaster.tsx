@@ -11,7 +11,7 @@ import Link from "next/link";
 import MethodSelectorModal from "@/components/MethodSelectorModal";
 import MatrixProgress from "@/components/MatrixProgress";
 
-const CHUNK_SIZE = 100;  // Reduced from 400: smaller payload = QR v7 (45×45 modules) vs v18 (85×85) — 2× bigger modules, much easier to scan
+const CHUNK_SIZE = 220; // 220 base64 chars = ~360 total bytes per QR frame (Version 11 61x61 QR grid with 8.2px modules)
 const THRESHOLD_BYTES = 100 * 1024; // 100 KB threshold (102,400 bytes)
 const DEFAULT_LOCAL_LAN_IP = "10.180.96.252:3000";
 

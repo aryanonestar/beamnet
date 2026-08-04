@@ -273,11 +273,15 @@ export default function Receiver() {
       lastScanTimeRef.current = now;
 
       try {
-        // ─── STEP 4: Draw 640×640 frame to offscreen canvas with high-quality smoothing
-        // imageSmoothingQuality:high reduces Moiré patterns from LCD screen pixels
+        // CRITICAL FIX: Crop a centered square from video feed (minDim x minDim)
+        // This prevents 16:9 video stretching/squishing, keeping QR finder pattern modules at 100% 1:1 square ratio!
+        const minDim = Math.min(vw, vh);
+        const sx = Math.floor((vw - minDim) / 2);
+        const sy = Math.floor((vh - minDim) / 2);
+
         offCtx.imageSmoothingEnabled = true;
         offCtx.imageSmoothingQuality = "high";
-        offCtx.drawImage(video, 0, 0, vw, vh, 0, 0, DECODE_WIDTH, DECODE_HEIGHT);
+        offCtx.drawImage(video, sx, sy, minDim, minDim, 0, 0, DECODE_WIDTH, DECODE_HEIGHT);
         const imageData = offCtx.getImageData(0, 0, DECODE_WIDTH, DECODE_HEIGHT);
 
         if (!imageData || imageData.data.length !== DECODE_WIDTH * DECODE_HEIGHT * 4) return;

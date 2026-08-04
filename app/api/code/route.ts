@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { put, list } from "@vercel/blob";
 
 interface CodeEntry {
   code: string;
@@ -58,7 +59,22 @@ export async function POST(request: Request): Promise<NextResponse> {
       expiresAt,
     };
 
+    // Store in local lambda memory
     codeStore.set(code, entry);
+
+    // Persist to Vercel Blob if token available so ANY serverless instance can resolve it
+    const token = process.env.BLOB_READ_WRITE_TOKEN;
+    if (token) {
+      try {
+        await put(`codes/${code}.json`, JSON.stringify(entry), {
+          access: "public",
+          token,
+          addRandomSuffix: false,
+        });
+      } catch (blobErr) {
+        console.warn("Vercel Blob code persistence warning:", blobErr);
+      }
+    }
 
     return NextResponse.json({
       success: true,
@@ -83,7 +99,30 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   cleanupExpiredCodes();
 
-  const entry = codeStore.get(code);
+  let entry: CodeEntry | undefined = codeStore.get(code);
+
+  // If not in local memory, check Vercel Blob persistent store
+  const token = process.env.BLOB_READ_WRITE_TOKEN;
+  if (!entry && token) {
+    try {
+      const { blobs } = await list({
+        prefix: `codes/${code}.json`,
+        token,
+      });
+
+      if (blobs.length > 0) {
+        const res = await fetch(blobs[0].url);
+        if (res.ok) {
+          entry = (await res.json()) as CodeEntry;
+          if (entry && entry.expiresAt > Date.now()) {
+            codeStore.set(code, entry); // cache in local memory
+          }
+        }
+      }
+    } catch (blobErr) {
+      console.warn("Error fetching code from Vercel Blob:", blobErr);
+    }
+  }
 
   if (!entry) {
     return NextResponse.json({ error: "Code not found or expired" }, { status: 404 });
