@@ -8,16 +8,18 @@ import CompletionModal from "@/components/CompletionModal";
 import Link from "next/link";
 import { KeyRound, Camera, Download, AlertCircle, Loader2, Zap, Clock, Activity, Layers } from "lucide-react";
 
-/** 480x480 decode canvas: larger canvas detects dense/small QR codes jsQR misses at 320x320 */
-const DECODE_WIDTH = 480;
-const DECODE_HEIGHT = 480;
+/** 640×640 decode canvas: high-res for dense QR codes on LCD screens; imageSmoothingQuality:high reduces Moiré aliasing */
+const DECODE_WIDTH = 640;
+const DECODE_HEIGHT = 640;
 
 export default function Receiver() {
   const videoRef = useRef<HTMLVideoElement>(null);
-  // previewCanvasRef removed: <video> itself is the visible viewfinder (Android requires visible video for frame decoding)
+  // videoRef is the visible viewfinder; Android requires visible video element for frame decoding
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null); // Green detection flash overlay
   const offscreenRef = useRef<HTMLCanvasElement | null>(null);
   const animRef = useRef<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const detectionFlashRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Mode selection: "camera" or "code"
   const [activeTab, setActiveTab] = useState<"camera" | "code">("camera");
@@ -271,8 +273,10 @@ export default function Receiver() {
       lastScanTimeRef.current = now;
 
       try {
-        // ─── STEP 4: Draw downscaled 480x480 frame to offscreen canvas
-        // 8-param drawImage: maps full video frame → 480x480 with correct aspect scale
+        // ─── STEP 4: Draw 640×640 frame to offscreen canvas with high-quality smoothing
+        // imageSmoothingQuality:high reduces Moiré patterns from LCD screen pixels
+        offCtx.imageSmoothingEnabled = true;
+        offCtx.imageSmoothingQuality = "high";
         offCtx.drawImage(video, 0, 0, vw, vh, 0, 0, DECODE_WIDTH, DECODE_HEIGHT);
         const imageData = offCtx.getImageData(0, 0, DECODE_WIDTH, DECODE_HEIGHT);
 
@@ -294,12 +298,56 @@ export default function Receiver() {
 
         if (!code || !code.data || completedRef.current) return;
 
-        // ─── STEP 6: Handle decoded QR data
-        // Cloud URL QR
+        // ─── STEP 6a: Flash green detection outline on overlay canvas
+        const overlayCanvas = overlayCanvasRef.current;
+        if (overlayCanvas && code.location) {
+          const olvCtx = overlayCanvas.getContext("2d");
+          if (olvCtx) {
+            // Match overlay canvas size to video element display size
+            overlayCanvas.width = overlayCanvas.offsetWidth || 640;
+            overlayCanvas.height = overlayCanvas.offsetHeight || 480;
+            olvCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+            // Scale detection corner points from 640x640 decode space to overlay display space
+            const scaleX = overlayCanvas.width / DECODE_WIDTH;
+            const scaleY = overlayCanvas.height / DECODE_HEIGHT;
+            const pts = [
+              code.location.topLeftCorner,
+              code.location.topRightCorner,
+              code.location.bottomRightCorner,
+              code.location.bottomLeftCorner,
+            ];
+            olvCtx.beginPath();
+            olvCtx.moveTo(pts[0].x * scaleX, pts[0].y * scaleY);
+            pts.forEach((p) => olvCtx.lineTo(p.x * scaleX, p.y * scaleY));
+            olvCtx.closePath();
+            olvCtx.strokeStyle = "#4edea3";
+            olvCtx.lineWidth = 3;
+            olvCtx.shadowColor = "#4edea3";
+            olvCtx.shadowBlur = 12;
+            olvCtx.stroke();
+            // Auto-clear the outline after 400ms
+            if (detectionFlashRef.current) clearTimeout(detectionFlashRef.current);
+            detectionFlashRef.current = setTimeout(() => {
+              olvCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+            }, 400);
+          }
+        }
+
+        // ─── STEP 6b: Route by payload type
+        // Cloud URL QR — show download modal instead of redirecting
         if (code.data.startsWith("http://") || code.data.startsWith("https://")) {
           completedRef.current = true;
-          setStatusBadge("CLOUD REDIRECT SCANNED");
-          window.location.href = code.data;
+          isScanningRef.current = false;
+          setStatusBadge("CLOUD FILE DETECTED");
+          // Build a pseudo ReassemblyResult so the CompletionModal can render a download button
+          setResult({
+            blobUrl: code.data,
+            fileName: code.data.split("/").pop()?.split("?")[0] || "download",
+            fileSize: 0,
+            mimeType: "application/octet-stream",
+            crc32Valid: true,
+          });
+          setShowModal(true);
           return;
         }
 
@@ -474,8 +522,7 @@ export default function Receiver() {
                     onClick={() => videoRef.current?.play().catch(() => {})}
                     className="flex-1 bg-[#0e0e10] border border-[#3d494c] relative overflow-hidden flex items-center justify-center min-h-[380px] cursor-pointer"
                   >
-                    {/* ANDROID FIX: video must be fully visible in DOM for Android Chrome to decode frames.
-                        Using opacity:0 or display:none or 1x1px causes black/frozen feed on Android. */}
+                    {/* ANDROID FIX: video must be fully visible in DOM for frame decoding */}
                     <video
                       ref={videoRef}
                       autoPlay
@@ -484,6 +531,11 @@ export default function Receiver() {
                       onCanPlay={() => videoRef.current?.play().catch(() => {})}
                       onLoadedMetadata={() => videoRef.current?.play().catch(() => {})}
                       className="w-full h-full object-cover"
+                    />
+                    {/* Green QR detection outline overlay */}
+                    <canvas
+                      ref={overlayCanvasRef}
+                      className="absolute inset-0 w-full h-full pointer-events-none"
                     />
 
                     {!permissionGranted && !cameraError && (
