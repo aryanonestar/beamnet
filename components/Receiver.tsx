@@ -233,7 +233,7 @@ export default function Receiver() {
     return () => clearInterval(uiInterval);
   }, [activeTab, permissionGranted]);
 
-  // ── 320px Throttled 10 FPS Scanner Loop (video is visible viewfinder) ──
+  // ── Bulletproof rAF-first Scanner Loop (rAF scheduled at very top = IMMORTAL loop) ──
   useEffect(() => {
     if (activeTab !== "camera" || !permissionGranted) return;
 
@@ -243,131 +243,115 @@ export default function Receiver() {
 
     isScanningRef.current = true;
 
-    // ── Helper: schedule next frame (guarantees loop never dies) ──────────
-    const scheduleNextScan = () => {
-      if (!isScanningRef.current) return;
-      const targetVideo = videoRef.current;
-      if (targetVideo && "requestVideoFrameCallback" in targetVideo) {
-        (targetVideo as unknown as { requestVideoFrameCallback: (cb: () => void) => number }).requestVideoFrameCallback(processNextFrame);
-      } else {
+    const processNextFrame = () => {
+      // ─── STEP 1: Schedule NEXT frame IMMEDIATELY at the very top.
+      // This means the loop CANNOT die — no exception, early-return, or React re-render can kill it.
+      if (isScanningRef.current) {
         animRef.current = requestAnimationFrame(processNextFrame);
       }
-    };
-
-    const processNextFrame = () => {
-      if (!isScanningRef.current) return;
 
       const video = videoRef.current;
 
+      // ─── STEP 2: Validate video is ready (skip silently if not yet loaded)
+      if (
+        !video ||
+        video.readyState < 2 ||
+        video.videoWidth === 0 ||
+        video.videoHeight === 0
+      ) {
+        return;
+      }
+
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+
+      // ─── STEP 3: Throttle jsQR decoding to 15 FPS (66ms) — pure time check, no state
+      const now = performance.now();
+      if (now - lastScanTimeRef.current < 66) return;
+      lastScanTimeRef.current = now;
+
       try {
-        if (
-          video &&
-          video.readyState >= 2 &&
-          video.videoWidth > 0 &&
-          video.videoHeight > 0
-        ) {
-          const vw = video.videoWidth;
-          const vh = video.videoHeight;
+        // ─── STEP 4: Draw downscaled 480x480 frame to offscreen canvas
+        // 8-param drawImage: maps full video frame → 480x480 with correct aspect scale
+        offCtx.drawImage(video, 0, 0, vw, vh, 0, 0, DECODE_WIDTH, DECODE_HEIGHT);
+        const imageData = offCtx.getImageData(0, 0, DECODE_WIDTH, DECODE_HEIGHT);
 
-          // 15 FPS throttle (66ms) — faster than broadcaster's 8 FPS so no frames are skipped
-          const now = performance.now();
-          if (now - lastScanTimeRef.current >= 66) {
-            lastScanTimeRef.current = now;
+        if (!imageData || imageData.data.length !== DECODE_WIDTH * DECODE_HEIGHT * 4) return;
 
-            // 8-param drawImage: explicit source rect → clean scale to 480x480 (no squish)
-            offCtx.drawImage(
-              video,
-              0, 0, vw, vh,                         // Source: full camera frame
-              0, 0, DECODE_WIDTH, DECODE_HEIGHT       // Destination: 480x480 decode canvas
-            );
-            const imageData = offCtx.getImageData(0, 0, DECODE_WIDTH, DECODE_HEIGHT);
+        // ─── STEP 5: Run jsQR decode on the 480x480 pixel buffer
+        const code = jsQR(imageData.data, DECODE_WIDTH, DECODE_HEIGHT, {
+          inversionAttempts: "attemptBoth",
+        });
 
-            // Validate pixel array is exactly 480*480*4 bytes before passing to jsQR
-            if (imageData && imageData.data.length === DECODE_WIDTH * DECODE_HEIGHT * 4) {
-              const code = jsQR(imageData.data, DECODE_WIDTH, DECODE_HEIGHT, {
-                // attemptBoth: detects normal AND inverted QR codes (critical for screen glare/inversion)
-                inversionAttempts: "attemptBoth",
-              });
+        // FPS counter (counts actual jsQR decode attempts per second)
+        frameCountRef.current++;
+        const sysNow = Date.now();
+        if (sysNow - lastFpsTimeRef.current >= 1000) {
+          setScanFps(frameCountRef.current);
+          frameCountRef.current = 0;
+          lastFpsTimeRef.current = sysNow;
+        }
 
-              // FPS tracking
-              frameCountRef.current++;
-              const sysNow = Date.now();
-              if (sysNow - lastFpsTimeRef.current >= 1000) {
-                setScanFps(frameCountRef.current);
-                frameCountRef.current = 0;
-                lastFpsTimeRef.current = sysNow;
-              }
+        if (!code || !code.data || completedRef.current) return;
 
-              if (code && code.data && !completedRef.current) {
-                // Direct URL scan (Cloud QR Code)
-                if (code.data.startsWith("http://") || code.data.startsWith("https://")) {
-                  completedRef.current = true;
-                  setStatusBadge("CLOUD REDIRECT SCANNED");
-                  window.location.href = code.data;
-                  return;
-                }
+        // ─── STEP 6: Handle decoded QR data
+        // Cloud URL QR
+        if (code.data.startsWith("http://") || code.data.startsWith("https://")) {
+          completedRef.current = true;
+          setStatusBadge("CLOUD REDIRECT SCANNED");
+          window.location.href = code.data;
+          return;
+        }
 
-                // Optical Chunk scan
-                try {
-                  const raw = JSON.parse(code.data);
-                  const chunkMeta = raw.meta || raw;
-                  const chunkIdx = typeof chunkMeta.chunkIndex === "number" ? chunkMeta.chunkIndex : raw.chunkIndex;
-                  const total = typeof chunkMeta.totalChunks === "number" ? chunkMeta.totalChunks : raw.totalChunks;
-                  const payloadId = chunkMeta.id || raw.id;
+        // Optical chunk JSON
+        try {
+          const raw = JSON.parse(code.data);
+          const chunkMeta = raw.meta || raw;
+          const chunkIdx = typeof chunkMeta.chunkIndex === "number" ? chunkMeta.chunkIndex : raw.chunkIndex;
+          const total = typeof chunkMeta.totalChunks === "number" ? chunkMeta.totalChunks : raw.totalChunks;
+          const payloadId = chunkMeta.id || raw.id;
 
-                  if (payloadId && typeof chunkIdx === "number" && typeof total === "number") {
-                    const chunkObj: Chunk = raw.meta ? raw : { meta: raw, payload: raw.payload };
+          if (!payloadId || typeof chunkIdx !== "number" || typeof total !== "number") return;
 
-                    if (transmissionIdRef.current !== payloadId) {
-                      transmissionIdRef.current = payloadId;
-                      totalChunksRef.current = total;
-                      chunksMapRef.current.clear();
-                      receivedIndexesRef.current.clear();
-                      setStatusBadge(`RECEIVING DATA STREAM (${total} CHUNKS)`);
-                    }
+          const chunkObj: Chunk = raw.meta ? raw : { meta: raw, payload: raw.payload };
 
-                    if (!chunksMapRef.current.has(chunkIdx)) {
-                      chunksMapRef.current.set(chunkIdx, chunkObj);
-                      receivedIndexesRef.current.add(chunkIdx);
+          if (transmissionIdRef.current !== payloadId) {
+            transmissionIdRef.current = payloadId;
+            totalChunksRef.current = total;
+            chunksMapRef.current.clear();
+            receivedIndexesRef.current.clear();
+            setStatusBadge(`RECEIVING DATA STREAM (${total} CHUNKS)`);
+          }
 
-                      const currentCount = chunksMapRef.current.size;
+          if (!chunksMapRef.current.has(chunkIdx)) {
+            chunksMapRef.current.set(chunkIdx, chunkObj);
+            receivedIndexesRef.current.add(chunkIdx);
 
-                      if (currentCount === total && !completedRef.current) {
-                        completedRef.current = true;
-                        setStatusBadge("UNPACKING PAYLOAD...");
-
-                        const allChunks = Array.from(chunksMapRef.current.values());
-                        reassembleAndUnpack(allChunks)
-                          .then((res) => {
-                            setResult({ ...res, crc32Valid: true });
-                            setShowModal(true);
-                            setStatusBadge("OPTICAL STREAM SYNCED & INTACT");
-                          })
-                          .catch((err) => {
-                            const msg = err instanceof Error ? err.message : "Reassembly failed";
-                            setErrorMsg(msg);
-                            setStatusBadge("PAYLOAD REASSEMBLY ERROR");
-                          });
-                      }
-                    }
-                  }
-                } catch {
-                  /* ignore non-JSON frames */
-                }
-              }
+            if (chunksMapRef.current.size === total && !completedRef.current) {
+              completedRef.current = true;
+              setStatusBadge("UNPACKING PAYLOAD...");
+              reassembleAndUnpack(Array.from(chunksMapRef.current.values()))
+                .then((res) => {
+                  setResult({ ...res, crc32Valid: true });
+                  setShowModal(true);
+                  setStatusBadge("OPTICAL STREAM SYNCED & INTACT");
+                })
+                .catch((err) => {
+                  setErrorMsg(err instanceof Error ? err.message : "Reassembly failed");
+                  setStatusBadge("PAYLOAD REASSEMBLY ERROR");
+                });
             }
           }
+        } catch {
+          /* not a valid chunk JSON — skip silently */
         }
       } catch (err) {
         console.warn("Non-fatal frame error:", err);
-      } finally {
-        // GUARANTEE: loop keeps running unconditionally — errors CANNOT kill it
-        scheduleNextScan();
       }
     };
 
-    // Kick off loop
-    scheduleNextScan();
+    // Kick off the immortal loop
+    animRef.current = requestAnimationFrame(processNextFrame);
 
     return () => {
       isScanningRef.current = false;
