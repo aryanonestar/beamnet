@@ -11,7 +11,7 @@ import Link from "next/link";
 import MethodSelectorModal from "@/components/MethodSelectorModal";
 import MatrixProgress from "@/components/MatrixProgress";
 
-const CHUNK_SIZE = 400;
+const CHUNK_SIZE = 100;  // Reduced from 400: smaller payload = QR v7 (45×45 modules) vs v18 (85×85) — 2× bigger modules, much easier to scan
 const THRESHOLD_BYTES = 100 * 1024; // 100 KB threshold (102,400 bytes)
 const DEFAULT_LOCAL_LAN_IP = "10.180.96.252:3000";
 
@@ -72,9 +72,9 @@ export default function Broadcaster() {
   const generateQrDataUrl = useCallback(async (content: string) => {
     try {
       const dataUrl = await QRCode.toDataURL(content, {
-        errorCorrectionLevel: "L",
-        margin: 2,
-        width: 380,
+        errorCorrectionLevel: "M", // M > L: more noise resilient for camera scans
+        margin: 1,
+        width: 500, // Larger = bigger modules on screen = easier phone camera detection
         color: { dark: "#000000", light: "#ffffff" },
       });
       setQrDataUrl(dataUrl);
