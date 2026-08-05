@@ -500,7 +500,7 @@ export default function Receiver() {
                     )}
                   >
                     <Camera size={14} />
-                    Optical Scanner
+                    Air-Gapped Optical Stream (Slow)
                   </button>
                 </div>
                 <span className="text-[11px] font-mono text-[#4cd7f6] font-bold">
