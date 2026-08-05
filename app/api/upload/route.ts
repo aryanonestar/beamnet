@@ -9,7 +9,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       request,
       onBeforeGenerateToken: async () => ({
         allowedContentTypes: ['*/*'],
-        maximumSizeInBytes: 50 * 1024 * 1024, // 50 MB limit
+        maximumSizeInBytes: 500 * 1024 * 1024, // 500 MB max limit
         addRandomSuffix: true, // Prevents duplicate filename collision errors
       }),
       onUploadCompleted: async ({ blob }) => {

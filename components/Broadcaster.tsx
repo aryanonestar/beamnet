@@ -13,6 +13,7 @@ import MatrixProgress from "@/components/MatrixProgress";
 
 const CHUNK_SIZE = 220; // 220 base64 chars = ~360 total bytes per QR frame (Version 11 61x61 QR grid with 8.2px modules)
 const THRESHOLD_BYTES = 100 * 1024; // 100 KB threshold (102,400 bytes)
+const MAX_CLOUD_SIZE = 500 * 1024 * 1024; // 500 MB max limit (524,288,000 bytes)
 const DEFAULT_LOCAL_LAN_IP = "10.180.96.252:3000";
 
 export interface CloudBlobPayload {
@@ -272,8 +273,16 @@ export default function Broadcaster() {
     }
   }, [customHost, generateQrDataUrl, startOpticalChunking]);
 
-  // ── Process File with 100KB Threshold Rule ───────────────
+  // ── Process File with 500MB Limit & 100KB Threshold Rule ──
   const processFile = useCallback(async (selected: File) => {
+    if (!selected) return;
+
+    // 1. HARD CEILING CHECK (Prevents RAM crashes & serverless token overflow)
+    if (selected.size > MAX_CLOUD_SIZE) {
+      alert("File size exceeds 500 MB. Please select a smaller file.");
+      return;
+    }
+
     setFile(selected);
     setOriginalSize(selected.size);
     setPlaying(false);
@@ -283,9 +292,12 @@ export default function Broadcaster() {
     setChunks([]);
     setQrDataUrl("");
 
+    // 2. HYBRID ROUTING CHECK
     if (selected.size > THRESHOLD_BYTES) {
+      // Files > 100 KB: route directly to Cloud Upload (skip Gzip/pako buffer allocation)
       await startCloudUpload(selected);
     } else {
+      // Files <= 100 KB: Run air-gapped Gzip compression & optical stream
       try {
         const compressed = await compressFile(selected);
         setCompressedSize(compressed.length);
