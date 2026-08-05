@@ -670,6 +670,18 @@ export default function Broadcaster() {
                       )}
                     </div>
 
+                    {/* Native Camera UI Helper Badge */}
+                    {transferMode === "cloud" && cloudUrl && (
+                      <div className="mt-2 p-3 rounded-lg bg-emerald-950/40 border border-emerald-500/30 text-center w-full max-w-xs">
+                        <p className="text-xs font-mono text-emerald-400 font-semibold flex items-center justify-center gap-2">
+                          <span>📱</span> SCAN WITH ANY PHONE CAMERA OR GOOGLE LENS
+                        </p>
+                        <p className="text-[10px] font-mono text-zinc-400 mt-1">
+                          No app required on receiver • Opens direct file download
+                        </p>
+                      </div>
+                    )}
+
                     {/* Laser scan effect while playing */}
                     {playing && (
                       <div className="absolute left-0 right-0 top-1/2 h-0.5 bg-[#4cd7f6]/70 blur-sm animate-ping pointer-events-none" />
