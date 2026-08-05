@@ -753,6 +753,21 @@ export default function Receiver() {
         </footer>
       </main>
 
+      {/* ── Mobile Nav ── */}
+      <nav className="md:hidden fixed bottom-0 w-full bg-[#131315] border-t border-[#3d494c] flex justify-around items-center h-14 z-50">
+        <Link
+          href="/send"
+          className="flex flex-col items-center gap-1 text-[#bcc9cd] w-full h-full justify-center hover:text-[#4cd7f6] transition-colors"
+        >
+          <span className="text-lg">📡</span>
+          <span className="text-[10px] font-mono uppercase">Broadcast</span>
+        </Link>
+        <span className="flex flex-col items-center gap-1 text-[#4edea3] border-t-2 border-[#4edea3] w-full h-full justify-center bg-[#4edea3]/5">
+          <span className="text-lg">📷</span>
+          <span className="text-[10px] font-mono uppercase">Collect</span>
+        </span>
+      </nav>
+
       {/* Completion Modal */}
       {showModal && result && (
         <CompletionModal
