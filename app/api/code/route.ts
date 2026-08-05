@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { put, list } from "@vercel/blob";
+import { put, get, list } from "@vercel/blob";
 
 interface CodeEntry {
   code: string;
@@ -62,17 +62,30 @@ export async function POST(request: Request): Promise<NextResponse> {
     // Store in local lambda memory
     codeStore.set(code, entry);
 
-    // Persist to Vercel Blob if token available so ANY serverless instance can resolve it
+    // Persist to Vercel Blob so ANY serverless instance can resolve it
     const token = process.env.BLOB_READ_WRITE_TOKEN;
     if (token) {
+      const blobPath = `codes/${code}.json`;
+      const blobContent = JSON.stringify(entry);
+
       try {
-        await put(`codes/${code}.json`, JSON.stringify(entry), {
-          access: "public",
+        // Try private access first (BEAM-NET store is private)
+        await put(blobPath, blobContent, {
+          access: "private",
           token,
           addRandomSuffix: false,
         });
-      } catch (blobErr) {
-        console.warn("Vercel Blob code persistence warning:", blobErr);
+      } catch {
+        try {
+          // Fallback to public access
+          await put(blobPath, blobContent, {
+            access: "public",
+            token,
+            addRandomSuffix: false,
+          });
+        } catch (err2) {
+          console.warn("Vercel Blob passkey persistence warning:", err2);
+        }
       }
     }
 
@@ -104,23 +117,43 @@ export async function GET(request: Request): Promise<NextResponse> {
   // If not in local memory, check Vercel Blob persistent store
   const token = process.env.BLOB_READ_WRITE_TOKEN;
   if (!entry && token) {
+    const blobPath = `codes/${code}.json`;
     try {
-      const { blobs } = await list({
-        prefix: `codes/${code}.json`,
-        token,
-      });
+      // 1. Direct SDK get
+      const blobResult = await get(blobPath, { access: "private", token }).catch(() => null);
+      if (blobResult && blobResult.stream) {
+        const text = await new Response(blobResult.stream as unknown as ReadableStream).text();
+        entry = JSON.parse(text) as CodeEntry;
+      }
+    } catch {
+      /* ignore SDK get error */
+    }
 
-      if (blobs.length > 0) {
-        const res = await fetch(blobs[0].url);
-        if (res.ok) {
-          entry = (await res.json()) as CodeEntry;
-          if (entry && entry.expiresAt > Date.now()) {
-            codeStore.set(code, entry); // cache in local memory
+    // 2. Fallback to list prefix scan if direct get failed
+    if (!entry) {
+      try {
+        const { blobs } = await list({
+          prefix: `codes/${code}`,
+          token,
+        });
+
+        if (blobs.length > 0) {
+          const downloadUrl = blobs[0].downloadUrl || blobs[0].url;
+          const res = await fetch(downloadUrl, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+
+          if (res.ok) {
+            entry = (await res.json()) as CodeEntry;
           }
         }
+      } catch (listErr) {
+        console.warn("Vercel Blob passkey list error:", listErr);
       }
-    } catch (blobErr) {
-      console.warn("Error fetching code from Vercel Blob:", blobErr);
+    }
+
+    if (entry && entry.expiresAt > Date.now()) {
+      codeStore.set(code, entry); // Cache in local lambda memory
     }
   }
 

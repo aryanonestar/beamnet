@@ -162,6 +162,10 @@ export default function Receiver() {
         ? `/api/d?p=${encodeURIComponent(data.pathname)}&f=${encodeURIComponent(data.fileName)}`
         : data.fileUrl;
 
+      if (!fileUrl) {
+        throw new Error("No file download URL attached to this 6-digit passkey");
+      }
+
       // Fetch file arrayBuffer for syntax/preview
       const blobRes = await fetch(fileUrl);
       const blobData = await blobRes.arrayBuffer();

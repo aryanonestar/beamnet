@@ -110,11 +110,34 @@ export default function Broadcaster() {
       setChunks(generated);
       setCurrentIdx(0);
 
+      // Upload payload to blob store so the 6-digit code has a valid download target
+      let uploadedPathname = "";
+      let uploadedFileUrl = "";
+
+      try {
+        const formData = new FormData();
+        formData.append("file", selected);
+        formData.append("filename", selected.name);
+        const uploadRes = await fetch("/api/blob/upload", {
+          method: "POST",
+          body: formData,
+        });
+        if (uploadRes.ok) {
+          const uploadJson = await uploadRes.json();
+          uploadedPathname = uploadJson.pathname || "";
+          uploadedFileUrl = uploadJson.url || "";
+        }
+      } catch (uErr) {
+        console.warn("Background upload warning for passkey target:", uErr);
+      }
+
       // Generate 6-digit code for optical file as well
       const codeRes = await fetch("/api/code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          fileUrl: uploadedFileUrl,
+          pathname: uploadedPathname,
           fileName: selected.name,
           fileSize: selected.size,
           mimeType,
