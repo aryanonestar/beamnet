@@ -369,7 +369,9 @@ export default function Broadcaster() {
       {/* ── Top Bar ── */}
       <header className="fixed flex justify-between items-center w-full px-8 h-16 bg-[#131315] border-b border-[#3d494c] z-50">
         <div className="flex items-center gap-6">
-          <h1 className="text-2xl font-bold text-[#4cd7f6] tracking-tighter uppercase">BEAM-NET</h1>
+          <Link href="/" className="cursor-pointer hover:opacity-80 transition-opacity">
+            <h1 className="text-2xl font-bold text-[#4cd7f6] tracking-tighter uppercase">BEAM-NET</h1>
+          </Link>
           {file && originalSize > THRESHOLD_BYTES ? (
             <div className="hidden sm:flex border border-[#4cd7f6] bg-[#4cd7f6]/10 px-2 py-1 items-center gap-2">
               <div className="w-1.5 h-1.5 bg-[#4cd7f6] animate-pulse rounded-none" />

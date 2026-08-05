@@ -21,8 +21,8 @@ export default function Receiver() {
   const streamRef = useRef<MediaStream | null>(null);
   const detectionFlashRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Mode selection: "camera" or "code"
-  const [activeTab, setActiveTab] = useState<"camera" | "code">("camera");
+  // Mode selection: "code" (default primary) or "camera"
+  const [activeTab, setActiveTab] = useState<"code" | "camera">("code");
 
   // OTP 6-Digit Passkey state
   const [codeDigits, setCodeDigits] = useState<string[]>(Array(6).fill(""));
@@ -433,7 +433,9 @@ export default function Receiver() {
       {/* ── Top Bar ── */}
       <header className="fixed flex justify-between items-center w-full px-8 h-16 bg-[#131315] border-b border-[#3d494c] z-50">
         <div className="flex items-center gap-6">
-          <h1 className="text-2xl font-bold text-[#4cd7f6] tracking-tighter uppercase">BEAM-NET</h1>
+          <Link href="/" className="cursor-pointer hover:opacity-80 transition-opacity">
+            <h1 className="text-2xl font-bold text-[#4cd7f6] tracking-tighter uppercase">BEAM-NET</h1>
+          </Link>
 
           {/* Sleek Minimalist Status Badge */}
           <div className="hidden sm:flex border border-[#4edea3] bg-[#4edea3]/10 px-3 py-1 items-center gap-2">
@@ -473,21 +475,9 @@ export default function Receiver() {
                 <div key={i} className={`absolute w-3 h-3 border-[#869397] ${pos}`} />
               ))}
 
-              {/* Mode Selector Tabs */}
+              {/* Mode Selector Tabs (6-Digit Passkey Primary Default) */}
               <header className="flex justify-between items-center mb-4 pb-2 border-b border-[#3d494c] gap-4">
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setActiveTab("camera")}
-                    className={cn(
-                      "px-3.5 py-1.5 font-mono text-[11px] uppercase tracking-wider border transition-all flex items-center gap-2 font-semibold",
-                      activeTab === "camera"
-                        ? "bg-[#4cd7f6] text-[#003640] border-[#4cd7f6]"
-                        : "bg-[#0e0e10] text-[#bcc9cd] border-[#3d494c] hover:text-[#4cd7f6]"
-                    )}
-                  >
-                    <Camera size={14} />
-                    Optical Scanner
-                  </button>
                   <button
                     onClick={() => setActiveTab("code")}
                     className={cn(
@@ -499,6 +489,18 @@ export default function Receiver() {
                   >
                     <KeyRound size={14} />
                     Enter 6-Digit Code
+                  </button>
+                  <button
+                    onClick={() => setActiveTab("camera")}
+                    className={cn(
+                      "px-3.5 py-1.5 font-mono text-[11px] uppercase tracking-wider border transition-all flex items-center gap-2 font-semibold",
+                      activeTab === "camera"
+                        ? "bg-[#4cd7f6] text-[#003640] border-[#4cd7f6]"
+                        : "bg-[#0e0e10] text-[#bcc9cd] border-[#3d494c] hover:text-[#4cd7f6]"
+                    )}
+                  >
+                    <Camera size={14} />
+                    Optical Scanner
                   </button>
                 </div>
                 <span className="text-[11px] font-mono text-[#4cd7f6] font-bold">
