@@ -10,6 +10,7 @@ import { cn } from "@/utils/cn";
 import Link from "next/link";
 import MethodSelectorModal from "@/components/MethodSelectorModal";
 import MatrixProgress from "@/components/MatrixProgress";
+import { ThemeToggleControl } from "@/components/ThemeToggleControl";
 
 const CHUNK_SIZE = 220; // 220 base64 chars = ~360 total bytes per QR frame (Version 11 61x61 QR grid with 8.2px modules)
 const THRESHOLD_BYTES = 100 * 1024; // 100 KB threshold (102,400 bytes)
@@ -36,7 +37,6 @@ export default function Broadcaster() {
   const [originalSize, setOriginalSize] = useState(0);
   const [compressedSize, setCompressedSize] = useState(0);
   const [preparing, setPreparing] = useState(false);
-  const [brightnessOn, setBrightnessOn] = useState(true);
   const [dragOver, setDragOver] = useState(false);
 
   // Vercel App Domain / Host IP for Phone QR Scans (e.g. beam-net.vercel.app or 10.180.96.252:3000)
@@ -750,24 +750,9 @@ export default function Broadcaster() {
             </div>
           </div>
 
-          {/* Brightness toggle */}
-          <div className="md:col-span-2 flex items-center justify-between border border-[#3d494c] px-3 py-2 bg-[#0e0e10]">
-            <span className="text-[11px] font-mono uppercase text-[#bcc9cd]">Max Brightness</span>
-            <button
-              onClick={() => setBrightnessOn((b) => !b)}
-              className="relative w-9 h-5 transition-colors"
-              style={{
-                backgroundColor: brightnessOn ? "#4cd7f6" : "#353437",
-                boxShadow: brightnessOn ? "0 0 8px rgba(76,215,246,0.3)" : "none",
-              }}
-            >
-              <div
-                className={cn(
-                  "absolute top-0.5 w-4 h-4 bg-white border border-[#3d494c] transition-transform duration-150",
-                  brightnessOn ? "translate-x-4" : "translate-x-0.5"
-                )}
-              />
-            </button>
+          {/* Theme Mode Toggle */}
+          <div className="md:col-span-3">
+            <ThemeToggleControl />
           </div>
 
           {/* Progress */}
