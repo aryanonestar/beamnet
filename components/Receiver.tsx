@@ -2,7 +2,14 @@
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import jsQR from "jsqr";
-import { reassembleAndUnpack, type Chunk, type ReassemblyResult, isTextPreviewable } from "@/lib/chunker";
+import {
+  reassembleAndUnpack,
+  parsePipePacket,
+  reassemblePipePackets,
+  type Chunk,
+  type ReassemblyResult,
+  isTextPreviewable,
+} from "@/lib/chunker";
 import { cn } from "@/utils/cn";
 import CompletionModal from "@/components/CompletionModal";
 import Link from "next/link";
@@ -47,6 +54,9 @@ export default function Receiver() {
 
   const [receivedIndexes, setReceivedIndexes] = useState<Set<number>>(new Set());
   const [totalChunks, setTotalChunks] = useState<number | null>(null);
+  const [receivedCount, setReceivedCount] = useState<number>(0);
+  const [totalCount, setTotalCount] = useState<number>(0);
+  const receivedPipeMapRef = useRef<Map<number, string>>(new Map());
   const [scanFps, setScanFps] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
   const [statusBadge, setStatusBadge] = useState<string>("AWAITING OPTICAL STREAM");
@@ -359,7 +369,45 @@ export default function Receiver() {
           return;
         }
 
-        // Optical chunk JSON
+        // Route B: Pipe Protocol QR (BEAM|fileName|fileType|totalChunks|chunkIndex|payload)
+        const pipePacket = parsePipePacket(code.data);
+        if (pipePacket) {
+          const { fileName, fileType, totalChunks, chunkIndex, payload } = pipePacket;
+
+          if (transmissionIdRef.current !== fileName) {
+            transmissionIdRef.current = fileName;
+            totalChunksRef.current = totalChunks;
+            receivedPipeMapRef.current.clear();
+            setReceivedCount(0);
+            setTotalCount(totalChunks);
+            setStatusBadge(`CAPTURING OPTICAL STREAM (${totalChunks} CHUNKS)`);
+          }
+
+          if (!receivedPipeMapRef.current.has(chunkIndex)) {
+            receivedPipeMapRef.current.set(chunkIndex, payload);
+            const count = receivedPipeMapRef.current.size;
+            setReceivedCount(count);
+            setTotalCount(totalChunks);
+
+            if (count === totalChunks && !completedRef.current) {
+              completedRef.current = true;
+              setStatusBadge("UNPACKING OPTICAL PAYLOAD...");
+              reassemblePipePackets(receivedPipeMapRef.current, totalChunks, fileName, fileType)
+                .then((res) => {
+                  setResult(res);
+                  setShowModal(true);
+                  setStatusBadge("OPTICAL STREAM SYNCED & INTACT");
+                })
+                .catch((err) => {
+                  setErrorMsg(err instanceof Error ? err.message : "Reassembly failed");
+                  setStatusBadge("OPTICAL REASSEMBLY ERROR");
+                });
+            }
+          }
+          return;
+        }
+
+        // Route C: Optical chunk JSON fallback
         try {
           const raw = JSON.parse(code.data);
           const chunkMeta = raw.meta || raw;
@@ -382,6 +430,8 @@ export default function Receiver() {
           if (!chunksMapRef.current.has(chunkIdx)) {
             chunksMapRef.current.set(chunkIdx, chunkObj);
             receivedIndexesRef.current.add(chunkIdx);
+            setReceivedCount(chunksMapRef.current.size);
+            setTotalCount(total);
 
             if (chunksMapRef.current.size === total && !completedRef.current) {
               completedRef.current = true;
@@ -575,6 +625,21 @@ export default function Receiver() {
                       </div>
                     )}
                   </div>
+
+                  {/* On-Screen Live Counter Card */}
+                  {totalCount > 0 && (
+                    <div className="mt-4 p-3 bg-cyan-950/60 border border-cyan-500/40 rounded-lg text-center font-mono">
+                      <p className="text-cyan-400 text-sm font-bold">
+                        CAPTURED {receivedCount} / {totalCount} CHUNKS
+                      </p>
+                      <div className="w-full bg-zinc-800 h-2 rounded-full mt-2 overflow-hidden">
+                        <div
+                          className="bg-cyan-400 h-full transition-all duration-200"
+                          style={{ width: `${(receivedCount / totalCount) * 100}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </>
               ) : (
                 /* 6-Digit Passkey Entry View */

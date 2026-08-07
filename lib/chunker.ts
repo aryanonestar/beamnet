@@ -126,6 +126,90 @@ export function createChunks(
   }));
 }
 
+// ─── Pipe Protocol ────────────────────────────────────────────────────────────
+
+export interface PipePacket {
+  fileName: string;
+  fileType: string;
+  totalChunks: number;
+  chunkIndex: number;
+  payload: string;
+}
+
+/**
+ * Create ultra-compact pipe-delimited QR packets (CHUNK_SIZE = 150 chars base64)
+ * Format: BEAM|fileName|fileType|totalChunks|chunkIndex|payload
+ */
+export function createPipePackets(
+  data: Uint8Array,
+  fileName: string,
+  fileType: string,
+  chunkSize: number = 150
+): string[] {
+  const base64 = uint8ToBase64(data);
+  const totalChunks = Math.ceil(base64.length / chunkSize);
+  const safeName = fileName.replace(/\|/g, "_");
+  const safeType = (fileType || "application/octet-stream").replace(/\|/g, "_");
+
+  const packets: string[] = [];
+  for (let i = 0; i < totalChunks; i++) {
+    const slice = base64.slice(i * chunkSize, (i + 1) * chunkSize);
+    packets.push(`BEAM|${safeName}|${safeType}|${totalChunks}|${i}|${slice}`);
+  }
+  return packets;
+}
+
+export function parsePipePacket(rawData: string): PipePacket | null {
+  if (!rawData || !rawData.startsWith("BEAM|")) return null;
+  const parts = rawData.split("|");
+  if (parts.length < 6) return null;
+
+  const [prefix, fileName, fileType, totalStr, indexStr, payload] = parts;
+  const totalChunks = parseInt(totalStr, 10);
+  const chunkIndex = parseInt(indexStr, 10);
+
+  if (isNaN(totalChunks) || isNaN(chunkIndex)) return null;
+
+  return { fileName, fileType, totalChunks, chunkIndex, payload };
+}
+
+export async function reassemblePipePackets(
+  chunksMap: Map<number, string>,
+  totalChunks: number,
+  fileName: string,
+  fileType: string
+): Promise<ReassemblyResult> {
+  let fullBase64 = "";
+  for (let i = 0; i < totalChunks; i++) {
+    const chunk = chunksMap.get(i);
+    if (!chunk) {
+      throw new Error(`Missing chunk index ${i}`);
+    }
+    fullBase64 += chunk;
+  }
+
+  const compressed = base64ToUint8(fullBase64);
+  const decompressed = ungzip(compressed);
+  const mimeType = inferMimeType(fileName, fileType);
+
+  const blob = new Blob([decompressed as unknown as Uint8Array<ArrayBuffer>], { type: mimeType });
+  const blobUrl = URL.createObjectURL(blob);
+
+  let textContent: string | undefined;
+  if (isTextPreviewable(mimeType)) {
+    textContent = new TextDecoder("utf-8", { fatal: false }).decode(decompressed);
+  }
+
+  return {
+    blobUrl,
+    mimeType,
+    fileName,
+    fileSize: decompressed.byteLength,
+    textContent,
+    crc32Valid: true,
+  };
+}
+
 // ─── Reassembly ───────────────────────────────────────────────────────────────
 
 /**

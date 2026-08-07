@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import QRCode from "qrcode";
 import * as SliderPrimitive from "@radix-ui/react-slider";
 import {
-  generateId, compressFile, createChunks, inferMimeType, type Chunk,
+  generateId, compressFile, createChunks, inferMimeType, createPipePackets, type Chunk,
 } from "@/lib/chunker";
 import { cn } from "@/utils/cn";
 import Link from "next/link";
@@ -68,12 +68,14 @@ export default function Broadcaster() {
     }
   }, []);
 
+  const [opticalPackets, setOpticalPackets] = useState<string[]>([]);
+
   // ── Render QR to Data URL ─────────────────────────────────
   const generateQrDataUrl = useCallback(async (content: string) => {
     try {
       const dataUrl = await QRCode.toDataURL(content, {
-        errorCorrectionLevel: "M", // M > L: more noise resilient for camera scans
-        margin: 1,
+        errorCorrectionLevel: "L", // Low error correction = largest QR squares
+        margin: 2,
         width: 500, // Larger = bigger modules on screen = easier phone camera detection
         color: { dark: "#000000", light: "#ffffff" },
       });
@@ -101,6 +103,12 @@ export default function Broadcaster() {
 
       setCompressedSize(compressed.length);
       const mimeType = inferMimeType(selected.name, selected.type);
+      
+      // Generate ultra-compact pipe-delimited packets (150-byte slice)
+      const packets = createPipePackets(compressed, selected.name, mimeType, 150);
+      setOpticalPackets(packets);
+      
+      // Also generate standard Chunk objects for backward compatibility
       const generated = createChunks(compressed, CHUNK_SIZE, {
         id: generateId(),
         mimeType,
@@ -152,8 +160,8 @@ export default function Broadcaster() {
 
       setUploadProgress(100);
 
-      if (generated.length > 0) {
-        await generateQrDataUrl(JSON.stringify(generated[0]));
+      if (packets.length > 0) {
+        await generateQrDataUrl(packets[0]);
       }
     } catch (err) {
       console.error("Compression error:", err);
@@ -329,25 +337,31 @@ export default function Broadcaster() {
     if (f) processFile(f);
   };
 
-  // Render optical chunk when currentIdx changes
+  // Render optical pipe packet when currentIdx changes
   useEffect(() => {
-    if (transferMode === "optical" && chunks.length > 0) {
-      generateQrDataUrl(JSON.stringify(chunks[currentIdx]));
+    if (transferMode === "optical" && opticalPackets.length > 0) {
+      generateQrDataUrl(opticalPackets[currentIdx % opticalPackets.length]);
+    } else if (transferMode === "optical" && chunks.length > 0) {
+      generateQrDataUrl(JSON.stringify(chunks[currentIdx % chunks.length]));
     }
-  }, [transferMode, currentIdx, chunks, generateQrDataUrl]);
+  }, [transferMode, currentIdx, opticalPackets, chunks, generateQrDataUrl]);
 
-  // Offline FPS loop
+  // 300ms cadence interval loop (300ms gives phone cameras time to auto-focus without motion blur)
   useEffect(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
-    if (transferMode !== "optical" || !playing || chunks.length === 0) return;
+    const packetCount = opticalPackets.length || chunks.length;
+    if (transferMode !== "optical" || !playing || packetCount === 0) return;
+
+    const frameDelay = fps > 0 ? Math.round(1000 / fps) : 300;
+
     intervalRef.current = setInterval(
-      () => setCurrentIdx((p) => (p + 1) % chunks.length),
-      Math.round(1000 / fps)
+      () => setCurrentIdx((p) => (p + 1) % packetCount),
+      frameDelay
     );
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [transferMode, playing, fps, chunks.length]);
+  }, [transferMode, playing, fps, opticalPackets.length, chunks.length]);
 
   const togglePlay = () => setPlaying((p) => !p);
 
