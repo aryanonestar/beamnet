@@ -10,7 +10,6 @@ import { cn } from "@/utils/cn";
 import Link from "next/link";
 import MethodSelectorModal from "@/components/MethodSelectorModal";
 import MatrixProgress from "@/components/MatrixProgress";
-import { ThemeToggleControl } from "@/components/ThemeToggleControl";
 
 const CHUNK_SIZE = 220; // 220 base64 chars = ~360 total bytes per QR frame (Version 11 61x61 QR grid with 8.2px modules)
 const THRESHOLD_BYTES = 100 * 1024; // 100 KB threshold (102,400 bytes)
@@ -722,7 +721,7 @@ export default function Broadcaster() {
       <footer className="fixed bottom-0 left-0 w-full bg-[#131315] border-t border-[#3d494c] p-4 z-40">
         <div className="max-w-[1440px] mx-auto w-full grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
           {/* FPS slider */}
-          <div className="md:col-span-3 flex flex-col gap-2">
+          <div className="md:col-span-4 flex flex-col gap-2">
             <div className="flex justify-between items-center">
               <span className="text-[11px] font-mono uppercase text-[#bcc9cd]">FPS Control</span>
               <span className="text-[18px] font-mono text-[#4cd7f6]">{fps}.0</span>
@@ -750,13 +749,8 @@ export default function Broadcaster() {
             </div>
           </div>
 
-          {/* Theme Mode Toggle */}
-          <div className="md:col-span-3">
-            <ThemeToggleControl />
-          </div>
-
           {/* Progress */}
-          <div className="md:col-span-7 flex flex-col gap-2">
+          <div className="md:col-span-8 flex flex-col gap-2">
             <div className="flex justify-between items-end">
               <div className="flex flex-col">
                 <span className="text-[11px] font-mono uppercase text-[#bcc9cd] mb-1">
