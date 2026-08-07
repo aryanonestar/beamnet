@@ -466,9 +466,10 @@ export default function Receiver() {
   }, [activeTab, permissionGranted]);
 
   // Exact Progress Math
-  const receivedCount = receivedIndexes.size;
-  const progressPct = totalChunks ? Math.min(100, Math.floor((receivedCount / totalChunks) * 100)) : 0;
-  const remainingChunks = totalChunks ? Math.max(0, totalChunks - receivedCount) : 0;
+  const activeReceivedCount = receivedCount || receivedIndexes.size;
+  const activeTotalChunks = totalCount || totalChunks;
+  const progressPct = activeTotalChunks ? Math.min(100, Math.floor((activeReceivedCount / activeTotalChunks) * 100)) : 0;
+  const remainingChunks = activeTotalChunks ? Math.max(0, activeTotalChunks - activeReceivedCount) : 0;
   const estSecondsLeft = scanFps > 0 && remainingChunks > 0 ? Math.ceil(remainingChunks / scanFps) : 0;
 
   return (
