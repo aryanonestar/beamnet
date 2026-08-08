@@ -10,7 +10,7 @@ export default function Home() {
           BEAM-NET
         </h1>
         <p className="mt-4 text-[#869397] font-mono text-sm leading-relaxed">
-          Ultra-secure file transfer using <span className="text-[#4edea3] font-semibold">Air-Gapped Optical QR Streams</span> and <span className="text-[#4cd7f6] font-semibold">Private Encrypted Cloud</span>.
+          Ultra-secure file transfer using <span className="text-[#4edea3] font-semibold">Air-Gapped Optical QR Streams</span> and <span className="text-[#4cd7f6] font-semibold">Private Encrypted Storage</span>.
         </p>
       </div>
 
