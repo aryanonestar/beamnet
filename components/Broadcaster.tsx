@@ -511,10 +511,10 @@ export default function Broadcaster() {
               {/* Drop zone */}
               <label
                 className={cn(
-                  "border border-dashed bg-[#0e0e10] h-40 mb-4 flex flex-col items-center justify-center gap-2 cursor-pointer relative overflow-hidden transition-all",
+                  "p-8 rounded-2xl border-2 border-dashed transition-all duration-200 text-center cursor-pointer relative overflow-hidden flex flex-col items-center justify-center gap-2 mb-4",
                   dragOver
-                    ? "border-[#4cd7f6] bg-[#4cd7f6]/5"
-                    : "border-[#3d494c] hover:border-[#4cd7f6] hover:bg-[#4cd7f6]/5"
+                    ? "border-cyan-400 bg-cyan-950/30 shadow-lg shadow-cyan-500/20 scale-[1.01]"
+                    : "border-zinc-800 bg-zinc-900/40 hover:border-zinc-700"
                 )}
                 onDragOver={(e) => {
                   e.preventDefault();
@@ -600,13 +600,13 @@ export default function Broadcaster() {
                     ))}
                   </div>
 
-                  <div className="flex items-center justify-between w-full text-[10px] font-mono text-[#bcc9cd] pt-1">
+                  <div className="flex flex-col items-center justify-center w-full text-[10px] font-mono text-[#bcc9cd] pt-1 gap-2">
                     <span>Type code on PC at <b className="text-[#4edea3]">/scan</b> to download</span>
                     <button
                       onClick={copyPasskey}
-                      className="bg-[#4edea3]/10 border border-[#4edea3] text-[#4edea3] px-3 py-1 text-[10px] font-mono uppercase hover:bg-[#4edea3] hover:text-[#003640] transition-colors font-bold"
+                      className="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-xs font-mono text-cyan-400 flex items-center justify-center gap-2 transition-all border border-zinc-700 font-bold"
                     >
-                      {passkeyCopied ? "✓ Copied!" : "📋 Copy Code"}
+                      <span>{passkeyCopied ? "✓ COPIED TO CLIPBOARD" : "📋 COPY PASSKEY"}</span>
                     </button>
                   </div>
                 </div>
