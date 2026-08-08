@@ -524,7 +524,7 @@ export default function Broadcaster() {
                       else startOpticalChunking(file);
                     }
                   }}
-                  placeholder="e.g. your-app.vercel.app or 10.180.96.252:3000"
+                  placeholder="e.g. beamnet.app or 10.180.96.252:3000"
                   className="bg-[#131315] border border-[#3d494c] text-[11px] font-mono text-[#4cd7f6] px-2 py-1 w-full focus:outline-none focus:border-[#4cd7f6]"
                 />
               </div>
