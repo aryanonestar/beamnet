@@ -10,6 +10,7 @@ import { cn } from "@/utils/cn";
 import Link from "next/link";
 import MethodSelectorModal from "@/components/MethodSelectorModal";
 import MatrixProgress from "@/components/MatrixProgress";
+import JSZip from "jszip";
 
 const CHUNK_SIZE = 220; // 220 base64 chars = ~360 total bytes per QR frame (Version 11 61x61 QR grid with 8.2px modules)
 const THRESHOLD_BYTES = 100 * 1024; // 100 KB threshold (102,400 bytes)
@@ -31,7 +32,34 @@ export default function Broadcaster() {
 
   const [file, setFile] = useState<File | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [isZipping, setIsZipping] = useState(false);
   const [transferMode, setTransferMode] = useState<"optical" | "cloud">("optical");
+
+  // Helper function: Bundles multi-file selections into a single .zip File object
+  const prepareFilesForTransfer = async (files: File[]): Promise<File> => {
+    if (files.length <= 1) {
+      return files[0];
+    }
+
+    console.log(`Packaging ${files.length} files into zip archive...`);
+    const zip = new JSZip();
+
+    files.forEach((f) => {
+      zip.file(f.name, f);
+    });
+
+    const zipBlob = await zip.generateAsync({
+      type: "blob",
+      compression: "DEFLATE",
+      compressionOptions: { level: 6 },
+    });
+
+    const zipFileName = `beamnet_files_${files.length}_items.zip`;
+
+    return new File([zipBlob], zipFileName, {
+      type: "application/zip",
+    });
+  };
   const [chunks, setChunks] = useState<Chunk[]>([]);
   const [currentIdx, setCurrentIdx] = useState(0);
   const [fps, setFps] = useState(8);
@@ -312,7 +340,7 @@ export default function Broadcaster() {
 
   const MAX_FILE_COUNT = 50;
 
-  const processSelectedFiles = (incomingFiles: FileList | File[]) => {
+  const processSelectedFiles = async (incomingFiles: FileList | File[]) => {
     const fileArray = Array.from(incomingFiles);
 
     if (fileArray.length === 0) return;
@@ -324,10 +352,21 @@ export default function Broadcaster() {
     // Cap array at 50 files maximum
     const batch = fileArray.slice(0, MAX_FILE_COUNT);
     setSelectedFiles(batch);
-    setFile(batch[0]);
-    processFile(batch[0]);
 
-    console.log(`Loaded ${batch.length} files for transfer.`);
+    try {
+      if (batch.length > 1) {
+        setIsZipping(true);
+      }
+      // Auto-zip multi-file batch into a single .zip File object
+      const finalFileToUpload = await prepareFilesForTransfer(batch);
+      setIsZipping(false);
+      setFile(finalFileToUpload);
+      await processFile(finalFileToUpload);
+    } catch (err) {
+      console.error("Failed to prepare files for transfer:", err);
+      setIsZipping(false);
+      alert("Error compressing files into .zip archive. Please try again.");
+    }
   };
 
   // Handle Drag and Drop
@@ -526,6 +565,15 @@ export default function Broadcaster() {
                   className="hidden"
                 />
               </label>
+
+              {/* Zipping Status Badge */}
+              {isZipping && (
+                <div className="mt-3 p-3 bg-cyan-950/60 border border-cyan-500/40 rounded-lg text-center font-mono animate-pulse mb-4">
+                  <p className="text-cyan-400 text-xs font-bold flex items-center justify-center gap-2">
+                    <span>📦</span> COMPRESSING {selectedFiles.length} FILES INTO .ZIP ARCHIVE...
+                  </p>
+                </div>
+              )}
 
               {/* Batch File Summary Queue UI */}
               {selectedFiles.length > 0 && (
