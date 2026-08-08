@@ -394,13 +394,15 @@ export default function Broadcaster() {
     }
   }, [transferMode, currentIdx, opticalPackets, chunks, generateQrDataUrl]);
 
-  // 300ms cadence interval loop (300ms gives phone cameras time to auto-focus without motion blur)
+const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized cadence
+
+  // 333ms (3 FPS) synchronized cadence interval loop
   useEffect(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
     const packetCount = opticalPackets.length || chunks.length;
     if (transferMode !== "optical" || !playing || packetCount === 0) return;
 
-    const frameDelay = fps > 0 ? Math.round(1000 / fps) : 300;
+    const frameDelay = fps > 0 ? Math.round(1000 / fps) : SYNC_CADENCE_MS;
 
     intervalRef.current = setInterval(
       () => setCurrentIdx((p) => (p + 1) % packetCount),

@@ -52,10 +52,13 @@ export default function Receiver() {
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [cameraError, setCameraError] = useState("");
 
+const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized cadence
+
   const [receivedIndexes, setReceivedIndexes] = useState<Set<number>>(new Set());
   const [totalChunks, setTotalChunks] = useState<number | null>(null);
   const [receivedCount, setReceivedCount] = useState<number>(0);
   const [totalCount, setTotalCount] = useState<number>(0);
+  const [totalSnapshotsTaken, setTotalSnapshotsTaken] = useState<number>(0);
   const receivedPipeMapRef = useRef<Map<number, string>>(new Map());
   const [scanFps, setScanFps] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
@@ -331,10 +334,11 @@ export default function Receiver() {
       const vw = video.videoWidth;
       const vh = video.videoHeight;
 
-      // ─── STEP 3: Throttle jsQR decoding to 15 FPS (66ms) — pure time check, no state
+      // ─── STEP 3: Synchronized 3 FPS (333ms) Auto-Capture Throttle
       const now = performance.now();
-      if (now - lastScanTimeRef.current < 66) return;
+      if (now - lastScanTimeRef.current < SYNC_CADENCE_MS) return;
       lastScanTimeRef.current = now;
+      setTotalSnapshotsTaken((prev) => prev + 1);
 
       try {
         // CRITICAL FIX: Crop a centered square from video feed (minDim x minDim)
@@ -669,6 +673,14 @@ export default function Receiver() {
                       </div>
                     )}
 
+                    {/* Live Auto-Capture Snapshot Counter */}
+                    {permissionGranted && (
+                      <div className="absolute top-3 left-3 bg-zinc-950/80 border border-zinc-700 px-3 py-1 rounded-full text-[11px] text-cyan-400 font-mono font-bold flex items-center gap-2 z-10 shadow-lg">
+                        <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+                        AUTO-CAPTURING (3 FPS): {totalSnapshotsTaken} PHOTOS
+                      </div>
+                    )}
+
                     {/* Viewfinder Target */}
                     {permissionGranted && (
                       <div className="absolute inset-12 border border-[#4cd7f6]/30 pointer-events-none flex items-center justify-center">
@@ -677,15 +689,20 @@ export default function Receiver() {
                     )}
                   </div>
 
-                  {/* On-Screen Live Counter Card */}
+                  {/* Captured Chunks Accumulator UI */}
                   {totalCount > 0 && (
-                    <div className="mt-4 p-3 bg-cyan-950/60 border border-cyan-500/40 rounded-lg text-center font-mono">
-                      <p className="text-cyan-400 text-sm font-bold">
-                        CAPTURED {receivedCount} / {totalCount} CHUNKS
-                      </p>
-                      <div className="w-full bg-zinc-800 h-2 rounded-full mt-2 overflow-hidden">
+                    <div className="mt-4 p-4 rounded-xl bg-zinc-900 border border-cyan-500/30 text-left font-mono">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-xs text-cyan-400 font-bold uppercase">
+                          ACCUMULATED CHUNKS: {receivedCount} / {totalCount}
+                        </span>
+                        <span className="text-xs text-zinc-400 font-bold">
+                          {Math.floor((receivedCount / totalCount) * 100)}%
+                        </span>
+                      </div>
+                      <div className="w-full bg-zinc-950 h-2.5 rounded-full overflow-hidden border border-zinc-800">
                         <div
-                          className="bg-cyan-400 h-full transition-all duration-200"
+                          className="bg-cyan-400 h-full transition-all duration-300"
                           style={{ width: `${(receivedCount / totalCount) * 100}%` }}
                         />
                       </div>
