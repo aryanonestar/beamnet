@@ -27,7 +27,10 @@ export interface CloudBlobPayload {
 export default function Broadcaster() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [file, setFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [transferMode, setTransferMode] = useState<"optical" | "cloud">("optical");
   const [chunks, setChunks] = useState<Chunk[]>([]);
   const [currentIdx, setCurrentIdx] = useState(0);
@@ -325,16 +328,40 @@ export default function Broadcaster() {
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (f) processFile(f);
+  const MAX_FILE_COUNT = 50;
+
+  const processSelectedFiles = (incomingFiles: FileList | File[]) => {
+    const fileArray = Array.from(incomingFiles);
+
+    if (fileArray.length === 0) return;
+
+    if (fileArray.length > MAX_FILE_COUNT) {
+      alert(`Maximum 50 files allowed per batch. Processing the first 50 selected files.`);
+    }
+
+    // Cap array at 50 files maximum
+    const batch = fileArray.slice(0, MAX_FILE_COUNT);
+    setSelectedFiles(batch);
+    setFile(batch[0]);
+    processFile(batch[0]);
+
+    console.log(`Loaded ${batch.length} files for transfer.`);
   };
 
-  const handleDrop = (e: React.DragEvent) => {
+  // Handle Drag and Drop
+  const handleDrop = (e: React.DragEvent<HTMLLabelElement | HTMLDivElement>) => {
     e.preventDefault();
     setDragOver(false);
-    const f = e.dataTransfer.files?.[0];
-    if (f) processFile(f);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      processSelectedFiles(e.dataTransfer.files);
+    }
+  };
+
+  // Handle Input Selection
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      processSelectedFiles(e.target.files);
+    }
   };
 
   // Render optical pipe packet when currentIdx changes
@@ -500,15 +527,55 @@ export default function Broadcaster() {
                 <p className="text-[11px] font-mono uppercase tracking-widest text-[#bcc9cd] text-center px-2">
                   {preparing
                     ? "Processing Payload..."
+                    : selectedFiles.length > 1
+                    ? `${selectedFiles.length} FILES SELECTED FOR BATCH`
                     : file
                     ? file.name
-                    : "DRAG & DROP SECURE PAYLOAD HERE"}
+                    : "DRAG & DROP SECURE PAYLOAD HERE (UP TO 50 FILES)"}
                 </p>
                 <p className="text-[9px] font-mono text-[#3d494c] text-center">
                   Private Vercel Blob Store (BEAM-NET / store_Uuhi1JVtHqWZuScC)
                 </p>
-                <input type="file" onChange={handleFileChange} className="hidden" />
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileChange}
+                  multiple
+                  className="hidden"
+                />
               </label>
+
+              {/* Batch File Summary Queue UI */}
+              {selectedFiles.length > 0 && (
+                <div className="mb-4 p-4 rounded-xl bg-zinc-900 border border-zinc-800 text-left">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-mono font-bold text-cyan-400 uppercase">
+                      BATCH QUEUE ({selectedFiles.length} / 50 FILES)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedFiles([]);
+                        setFile(null);
+                      }}
+                      className="text-xs text-rose-400 hover:text-rose-300 font-mono"
+                    >
+                      CLEAR ALL
+                    </button>
+                  </div>
+
+                  {/* Scrollable File List Preview */}
+                  <div className="max-h-36 overflow-y-auto space-y-1 pr-1">
+                    {selectedFiles.map((fileItem, idx) => (
+                      <div key={idx} className="flex justify-between text-xs font-mono text-zinc-300 bg-zinc-950/60 p-2 rounded border border-zinc-800/50">
+                        <span className="truncate max-w-[200px]">{fileItem.name}</span>
+                        <span className="text-zinc-500 font-mono">{(fileItem.size / (1024 * 1024)).toFixed(2)} MB</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* High-Contrast 6-Digit Passkey Card for Phone-to-PC Sharing */}
               {passkey ? (
