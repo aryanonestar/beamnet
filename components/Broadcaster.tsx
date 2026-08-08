@@ -95,6 +95,8 @@ export default function Broadcaster() {
     setUploadProgress(5);
     setPasskey("");
 
+    const filesToUpload = selectedFiles.length > 0 ? selectedFiles : [selected];
+
     try {
       const progressTimer = setInterval(() => {
         setUploadProgress((prev) => (prev < 90 ? prev + 10 : prev));
@@ -121,44 +123,44 @@ export default function Broadcaster() {
       setChunks(generated);
       setCurrentIdx(0);
 
-      // Upload payload to blob store so the 6-digit code has a valid download target
-      let uploadedPathname = "";
-      let uploadedFileUrl = "";
-
-      try {
-        const formData = new FormData();
-        formData.append("file", selected);
-        formData.append("filename", selected.name);
-        const uploadRes = await fetch("/api/blob/upload", {
-          method: "POST",
-          body: formData,
-        });
-        if (uploadRes.ok) {
-          const uploadJson = await uploadRes.json();
-          uploadedPathname = uploadJson.pathname || "";
-          uploadedFileUrl = uploadJson.url || "";
+      // Upload payloads to blob store so the 6-digit code covers all files in batch
+      const uploadResults: Array<{ name: string; url: string; size: number; type: string; pathname?: string }> = [];
+      for (const f of filesToUpload) {
+        try {
+          const formData = new FormData();
+          formData.append("file", f);
+          formData.append("filename", f.name);
+          const uploadRes = await fetch("/api/blob/upload", {
+            method: "POST",
+            body: formData,
+          });
+          if (uploadRes.ok) {
+            const uploadJson = await uploadRes.json();
+            uploadResults.push({
+              name: f.name,
+              url: uploadJson.url || "",
+              size: f.size,
+              type: f.type || inferMimeType(f.name, f.type),
+              pathname: uploadJson.pathname || "",
+            });
+          }
+        } catch (uErr) {
+          console.warn("Background upload warning for passkey target:", uErr);
         }
-      } catch (uErr) {
-        console.warn("Background upload warning for passkey target:", uErr);
       }
 
-      // Generate 6-digit code for optical file as well
-      const codeRes = await fetch("/api/code", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fileUrl: uploadedFileUrl,
-          pathname: uploadedPathname,
-          fileName: selected.name,
-          fileSize: selected.size,
-          mimeType,
-        }),
-      });
+      if (uploadResults.length > 0) {
+        const codeRes = await fetch("/api/code", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ files: uploadResults }),
+        });
 
-      if (codeRes.ok) {
-        const codeData = await codeRes.json();
-        setPasskey(codeData.code);
-        setPasskeyExpiresAt(codeData.expiresAt);
+        if (codeRes.ok) {
+          const codeData = await codeRes.json();
+          setPasskey(codeData.code);
+          setPasskeyExpiresAt(codeData.expiresAt);
+        }
       }
 
       setUploadProgress(100);
@@ -171,68 +173,18 @@ export default function Broadcaster() {
     } finally {
       setTimeout(() => setPreparing(false), 300);
     }
-  }, [generateQrDataUrl]);
+  }, [generateQrDataUrl, selectedFiles]);
 
   // ── Execute Private Cloud Upload with XHR & Generate 6-Digit Code ──────
   const startCloudUpload = useCallback(async (selected: File) => {
     setTransferMode("cloud");
     setPreparing(true);
     setFallbackNotice("");
-    setCloudUrl("");
-    setPasskey("");
-    setUploadProgress(2);
+
+    const filesToUpload = selectedFiles.length > 0 ? selectedFiles : [selected];
+    setUploadProgress(5);
 
     try {
-      // 1. Health check
-      const healthRes = await fetch("/api/blob/health");
-      const healthData = await healthRes.json();
-
-      if (!healthData.ready) {
-        throw new Error(healthData.error || "Server token not ready");
-      }
-
-      setUploadProgress(10);
-
-      // 2. Upload file via XHR
-      const formData = new FormData();
-      formData.append("file", selected);
-      formData.append("filename", selected.name);
-
-      const uploadData = await new Promise<{ pathname: string; url: string }>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", "/api/blob/upload");
-
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) {
-            const pct = Math.round((e.loaded / e.total) * 75) + 10;
-            setUploadProgress(pct);
-          }
-        };
-
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            try {
-              resolve(JSON.parse(xhr.responseText));
-            } catch {
-              reject(new Error("Invalid server JSON response"));
-            }
-          } else {
-            try {
-              const errJson = JSON.parse(xhr.responseText);
-              reject(new Error(errJson.error || "Upload failed"));
-            } catch {
-              reject(new Error(`Upload failed with status ${xhr.status}`));
-            }
-          }
-        };
-
-        xhr.onerror = () => reject(new Error("Network error during blob upload"));
-        xhr.send(formData);
-      });
-
-      setUploadProgress(85);
-
-      // 3. Construct landing page URL
       let activeHost = customHost.trim();
       if (!activeHost) {
         if (typeof window !== "undefined") {
@@ -249,39 +201,69 @@ export default function Broadcaster() {
           ? "https://"
           : "http://";
 
-      const targetDownloadPageUrl = `${protocol}${activeHost}/d?p=${encodeURIComponent(uploadData.pathname)}&f=${encodeURIComponent(selected.name)}`;
-      setCloudUrl(targetDownloadPageUrl);
+      const uploadResults: Array<{ name: string; url: string; size: number; type: string; pathname?: string }> = [];
 
-      // 4. Generate 6-Digit Passkey
+      for (let i = 0; i < filesToUpload.length; i++) {
+        const currentFile = filesToUpload[i];
+        const formData = new FormData();
+        formData.append("file", currentFile);
+        formData.append("filename", currentFile.name);
+
+        const uploadRes = await fetch("/api/blob/upload", {
+          method: "POST",
+          body: formData,
+        });
+
+        if (uploadRes.ok) {
+          const uploadJson = await uploadRes.json();
+          const mime = currentFile.type || inferMimeType(currentFile.name, currentFile.type);
+          const downloadUrl = `${protocol}${activeHost}/d?p=${encodeURIComponent(uploadJson.pathname || "")}&f=${encodeURIComponent(currentFile.name)}`;
+          uploadResults.push({
+            name: currentFile.name,
+            url: downloadUrl || uploadJson.url,
+            size: currentFile.size,
+            type: mime,
+            pathname: uploadJson.pathname,
+          });
+        }
+        setUploadProgress(Math.round(((i + 1) / filesToUpload.length) * 80) + 10);
+      }
+
+      if (uploadResults.length === 0) {
+        throw new Error("No files uploaded successfully");
+      }
+
+      setUploadProgress(90);
+
+      // Post full file list payload to /api/code
       const codeRes = await fetch("/api/code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fileUrl: targetDownloadPageUrl,
-          pathname: uploadData.pathname,
-          fileName: selected.name,
-          fileSize: selected.size,
-          mimeType: selected.type || inferMimeType(selected.name, selected.type),
-        }),
+        body: JSON.stringify({ files: uploadResults }),
       });
 
       if (codeRes.ok) {
         const codeData = await codeRes.json();
-        setPasskey(codeData.code);
+        const { code } = codeData;
+        setPasskey(code);
         setPasskeyExpiresAt(codeData.expiresAt);
+
+        // Generate Batch Direct Link QR URL (https://beamnet.vercel.app/scan?code=123456)
+        const batchShareUrl = `${protocol}${activeHost}/scan?code=${code}`;
+        setCloudUrl(batchShareUrl);
+        await generateQrDataUrl(batchShareUrl);
       }
 
       setUploadProgress(100);
-      await generateQrDataUrl(targetDownloadPageUrl);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Upload failed";
-      console.warn("Private Blob upload failed — auto falling back to Optical Air-Gapped Stream:", msg);
-      setFallbackNotice(`Private Blob upload skipped (${msg}) — automatically switched to Air-Gapped Optical QR Stream.`);
+      console.warn("Private Encrypted Cloud upload failed — falling back to Optical Stream:", msg);
+      setFallbackNotice(`Private Encrypted Cloud upload skipped (${msg}) — automatically switched to Air-Gapped Optical QR Stream.`);
       await startOpticalChunking(selected);
     } finally {
       setTimeout(() => setPreparing(false), 400);
     }
-  }, [customHost, generateQrDataUrl, startOpticalChunking]);
+  }, [customHost, generateQrDataUrl, selectedFiles, startOpticalChunking]);
 
   // ── Process File with 500MB Limit & 100KB Threshold Rule ──
   const processFile = useCallback(async (selected: File) => {

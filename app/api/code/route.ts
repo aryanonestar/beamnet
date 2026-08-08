@@ -1,8 +1,17 @@
 import { NextResponse } from "next/server";
 import { put, get, list } from "@vercel/blob";
 
-interface CodeEntry {
+export interface FileItem {
+  name: string;
+  url: string;
+  size: number;
+  type: string;
+  pathname?: string;
+}
+
+export interface CodeEntry {
   code: string;
+  files: FileItem[];
   fileUrl: string;
   pathname?: string;
   fileName: string;
@@ -36,26 +45,48 @@ function generate6DigitCode(): string {
   return code;
 }
 
-// POST /api/code: Store payload metadata & return 6-digit passkey
+// POST /api/code: Store single file or array of files & return 6-digit passkey
 export async function POST(request: Request): Promise<NextResponse> {
   try {
     const body = await request.json();
-    const { fileUrl, pathname, fileName, fileSize, mimeType } = body;
+    const { files: incomingFiles, fileUrl, pathname, fileName, fileSize, mimeType, code: requestedCode } = body;
 
-    if (!fileName) {
+    let files: FileItem[] = [];
+
+    if (Array.isArray(incomingFiles) && incomingFiles.length > 0) {
+      files = incomingFiles.map((f: any) => ({
+        name: f.name || f.fileName || "file",
+        url: f.url || f.fileUrl || "",
+        size: Number(f.size || f.fileSize) || 0,
+        type: f.type || f.mimeType || "application/octet-stream",
+        pathname: f.pathname || "",
+      }));
+    } else if (fileName) {
+      files = [
+        {
+          name: fileName,
+          url: fileUrl || "",
+          size: Number(fileSize) || 0,
+          type: mimeType || "application/octet-stream",
+          pathname: pathname || "",
+        },
+      ];
+    } else {
       return NextResponse.json({ error: "Missing file parameters" }, { status: 400 });
     }
 
-    const code = generate6DigitCode();
+    const code = requestedCode || generate6DigitCode();
     const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes TTL
 
+    const primaryFile = files[0];
     const entry: CodeEntry = {
       code,
-      fileUrl: fileUrl || "",
-      pathname: pathname || "",
-      fileName,
-      fileSize: Number(fileSize) || 0,
-      mimeType: mimeType || "application/octet-stream",
+      files,
+      fileUrl: primaryFile.url,
+      pathname: primaryFile.pathname || "",
+      fileName: primaryFile.name,
+      fileSize: primaryFile.size,
+      mimeType: primaryFile.type,
       expiresAt,
     };
 
@@ -69,7 +100,6 @@ export async function POST(request: Request): Promise<NextResponse> {
       const blobContent = JSON.stringify(entry);
 
       try {
-        // Try private access first (BEAM-NET store is private)
         await put(blobPath, blobContent, {
           access: "private",
           token,
@@ -77,7 +107,6 @@ export async function POST(request: Request): Promise<NextResponse> {
         });
       } catch {
         try {
-          // Fallback to public access
           await put(blobPath, blobContent, {
             access: "public",
             token,
@@ -92,6 +121,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({
       success: true,
       code,
+      count: files.length,
+      files,
       expiresAt,
       ttlSeconds: 15 * 60,
     });
@@ -101,7 +132,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 }
 
-// GET /api/code?code=849201: Resolve 6-digit passkey to file payload
+// GET /api/code?code=849201: Resolve 6-digit passkey to file payload (single or batch)
 export async function GET(request: Request): Promise<NextResponse> {
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code")?.trim();
@@ -119,7 +150,6 @@ export async function GET(request: Request): Promise<NextResponse> {
   if (!entry && token) {
     const blobPath = `codes/${code}.json`;
     try {
-      // 1. Direct SDK get
       const blobResult = await get(blobPath, { access: "private", token }).catch(() => null);
       if (blobResult && blobResult.stream) {
         const text = await new Response(blobResult.stream as unknown as ReadableStream).text();
@@ -129,7 +159,6 @@ export async function GET(request: Request): Promise<NextResponse> {
       /* ignore SDK get error */
     }
 
-    // 2. Fallback to list prefix scan if direct get failed
     if (!entry) {
       try {
         const { blobs } = await list({
@@ -153,7 +182,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     }
 
     if (entry && entry.expiresAt > Date.now()) {
-      codeStore.set(code, entry); // Cache in local lambda memory
+      codeStore.set(code, entry);
     }
   }
 
@@ -166,9 +195,22 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "Code has expired" }, { status: 404 });
   }
 
+  const normalizedFiles = Array.isArray(entry.files) && entry.files.length > 0
+    ? entry.files
+    : [
+        {
+          name: entry.fileName,
+          url: entry.fileUrl,
+          size: entry.fileSize,
+          type: entry.mimeType,
+          pathname: entry.pathname,
+        },
+      ];
+
   return NextResponse.json({
     success: true,
     code: entry.code,
+    files: normalizedFiles,
     fileUrl: entry.fileUrl,
     pathname: entry.pathname,
     fileName: entry.fileName,

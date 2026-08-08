@@ -61,6 +61,23 @@ export default function Receiver() {
   const [errorMsg, setErrorMsg] = useState("");
   const [statusBadge, setStatusBadge] = useState<string>("AWAITING OPTICAL STREAM");
 
+  const [receivedFiles, setReceivedFiles] = useState<Array<{ name: string; url: string; size: number; type: string }>>([]);
+
+  const handleDownloadAll = (fileList: Array<{ url: string; name: string }>) => {
+    fileList.forEach((file, index) => {
+      setTimeout(() => {
+        const link = document.createElement("a");
+        link.href = file.url;
+        link.download = file.name;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }, index * 350);
+    });
+  };
+
   // Completion modal state
   const [showModal, setShowModal] = useState(false);
   const [result, setResult] = useState<ReassemblyResult | null>(null);
@@ -167,33 +184,54 @@ export default function Receiver() {
       const data = await res.json();
       setStatusBadge("FETCHING PAYLOAD METADATA...");
 
-      // Construct file blob or serve stream
-      const fileUrl = data.pathname
-        ? `/api/d?p=${encodeURIComponent(data.pathname)}&f=${encodeURIComponent(data.fileName)}`
-        : data.fileUrl;
+      const fileList: Array<{ name: string; url: string; size: number; type: string }> =
+        Array.isArray(data.files) && data.files.length > 0
+          ? data.files.map((f: any) => ({
+              name: f.name || f.fileName || "download",
+              url: f.pathname
+                ? `/api/d?p=${encodeURIComponent(f.pathname)}&f=${encodeURIComponent(f.name || f.fileName || "")}`
+                : f.url || f.fileUrl || "",
+              size: Number(f.size || f.fileSize) || 0,
+              type: f.type || f.mimeType || "application/octet-stream",
+            }))
+          : [
+              {
+                name: data.fileName || "download",
+                url: data.pathname
+                  ? `/api/d?p=${encodeURIComponent(data.pathname)}&f=${encodeURIComponent(data.fileName || "")}`
+                  : data.fileUrl || "",
+                size: Number(data.fileSize) || 0,
+                type: data.mimeType || "application/octet-stream",
+              },
+            ];
 
-      if (!fileUrl) {
-        throw new Error("No file download URL attached to this 6-digit passkey");
-      }
+      setReceivedFiles(fileList);
 
-      // Fetch file arrayBuffer for syntax/preview
-      const blobRes = await fetch(fileUrl);
-      const blobData = await blobRes.arrayBuffer();
-      const mime = data.mimeType || "application/octet-stream";
-
-      const fileBlob = new Blob([blobData], { type: mime });
-      const blobUrl = URL.createObjectURL(fileBlob);
-
+      const primaryFile = fileList[0];
+      let blobUrl = primaryFile.url;
       let textContent: string | undefined = undefined;
-      if (isTextPreviewable(mime)) {
-        textContent = new TextDecoder().decode(blobData);
+
+      try {
+        if (primaryFile.url) {
+          const blobRes = await fetch(primaryFile.url);
+          if (blobRes.ok) {
+            const blobData = await blobRes.arrayBuffer();
+            const fileBlob = new Blob([blobData], { type: primaryFile.type });
+            blobUrl = URL.createObjectURL(fileBlob);
+            if (isTextPreviewable(primaryFile.type)) {
+              textContent = new TextDecoder().decode(blobData);
+            }
+          }
+        }
+      } catch {
+        /* fallback to direct URL */
       }
 
       const assembledResult: ReassemblyResult = {
         blobUrl,
-        fileName: data.fileName,
-        fileSize: data.fileSize || blobData.byteLength,
-        mimeType: mime,
+        fileName: primaryFile.name,
+        fileSize: primaryFile.size,
+        mimeType: primaryFile.type,
         textContent,
         crc32Valid: true,
       };
@@ -209,6 +247,18 @@ export default function Receiver() {
       setCodeVerifying(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const codeParam = params.get("code");
+      if (codeParam && codeParam.length === 6) {
+        const digits = codeParam.split("");
+        setCodeDigits(digits);
+        verifyCode(codeParam);
+      }
+    }
+  }, [verifyCode]);
 
   // Handle Digit Typing
   const handleDigitChange = (index: number, value: string) => {
@@ -703,6 +753,45 @@ export default function Receiver() {
                       </>
                     )}
                   </button>
+
+                  {/* Multi-File Batch Ready UI */}
+                  {receivedFiles && receivedFiles.length > 0 && (
+                    <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 text-left w-full max-w-md mx-auto mt-4 font-mono">
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-xs font-mono font-bold text-cyan-400">
+                          BATCH READY ({receivedFiles.length} FILES)
+                        </span>
+                        {receivedFiles.length > 1 && (
+                          <button
+                            onClick={() => handleDownloadAll(receivedFiles)}
+                            className="px-3 py-1.5 rounded bg-cyan-400 text-black text-xs font-mono font-bold hover:bg-cyan-300 transition-colors"
+                          >
+                            ⚡ DOWNLOAD ALL ({receivedFiles.length})
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
+                        {receivedFiles.map((file, idx) => (
+                          <div key={idx} className="flex items-center justify-between p-2.5 rounded bg-zinc-950 border border-zinc-800">
+                            <div className="truncate max-w-[200px]">
+                              <p className="text-xs font-mono text-zinc-200 truncate">{file.name}</p>
+                              <p className="text-[10px] font-mono text-zinc-500">{(file.size / (1024 * 1024)).toFixed(2)} MB</p>
+                            </div>
+                            <a
+                              href={file.url}
+                              download={file.name}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-xs font-mono text-cyan-400 border border-zinc-700"
+                            >
+                              Download
+                            </a>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -849,6 +938,7 @@ export default function Receiver() {
             setTotalChunks(null);
           }}
           result={result}
+          batchFiles={receivedFiles}
         />
       )}
     </div>
