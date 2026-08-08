@@ -88,6 +88,26 @@ export default function Broadcaster() {
   // Modal State
   const [showSelectorModal, setShowSelectorModal] = useState(false);
 
+  // Pasted Link State
+  const [pastedUrl, setPastedUrl] = useState<string>("");
+
+  // Convert pasted link into a virtual File object and feed it to the existing transfer engine
+  const handleSendPastedLink = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const trimmedUrl = pastedUrl.trim();
+    if (!trimmedUrl) return;
+
+    const formattedUrl = /^https?:\/\//i.test(trimmedUrl)
+      ? trimmedUrl
+      : `https://${trimmedUrl}`;
+
+    const linkBlob = new Blob([formattedUrl], { type: "text/plain" });
+    const virtualLinkFile = new File([linkBlob], "shared_link.txt", { type: "text/plain" });
+
+    await processSelectedFiles([virtualLinkFile]);
+    setPastedUrl("");
+  };
+
   // Initialize Host
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -530,6 +550,28 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
                   className="bg-[#131315] border border-[#3d494c] text-[11px] font-mono text-[#4cd7f6] px-2 py-1 w-full focus:outline-none focus:border-[#4cd7f6]"
                 />
               </div>
+
+              {/* TOP SECTION: LINK INPUT BAR */}
+              <form 
+                onSubmit={handleSendPastedLink} 
+                className="p-2 mb-4 rounded-xl bg-zinc-950/80 border border-zinc-800 flex items-center gap-2 shadow-inner"
+              >
+                <span className="pl-3 text-cyan-400 text-sm">🔗</span>
+                <input
+                  type="url"
+                  value={pastedUrl}
+                  onChange={(e) => setPastedUrl(e.target.value)}
+                  placeholder="Paste any link to share (e.g. https://...)"
+                  className="w-full bg-transparent text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none px-2 py-1 font-mono"
+                />
+                <button
+                  type="submit"
+                  disabled={!pastedUrl.trim()}
+                  className="px-3 py-1.5 rounded-lg bg-cyan-400 hover:bg-cyan-300 disabled:opacity-40 disabled:hover:bg-cyan-400 text-black text-xs font-bold transition-all flex-shrink-0 font-mono uppercase"
+                >
+                  SEND LINK
+                </button>
+              </form>
 
               {/* Drop zone */}
               <label
