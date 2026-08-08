@@ -129,6 +129,7 @@ export function createChunks(
 // ─── Pipe Protocol ────────────────────────────────────────────────────────────
 
 export interface PipePacket {
+  sessionId?: string;
   fileName: string;
   fileType: string;
   totalChunks: number;
@@ -137,24 +138,26 @@ export interface PipePacket {
 }
 
 /**
- * Create ultra-compact pipe-delimited QR packets (CHUNK_SIZE = 150 chars base64)
- * Format: BEAM|fileName|fileType|totalChunks|chunkIndex|payload
+ * Create ultra-compact pipe-delimited QR packets (CHUNK_SIZE = 90 chars base64)
+ * Format: BEAM|sessionId|fileName|fileType|totalChunks|chunkIndex|payload
  */
 export function createPipePackets(
   data: Uint8Array,
   fileName: string,
   fileType: string,
-  chunkSize: number = 150
+  chunkSize: number = 90,
+  sessionId?: string
 ): string[] {
   const base64 = uint8ToBase64(data);
   const totalChunks = Math.ceil(base64.length / chunkSize);
-  const safeName = fileName.replace(/\|/g, "_");
-  const safeType = (fileType || "application/octet-stream").replace(/\|/g, "_");
+  const safeName = encodeURIComponent(fileName);
+  const safeType = encodeURIComponent(fileType || "application/octet-stream");
+  const sid = sessionId || Math.random().toString(36).substring(2, 6);
 
   const packets: string[] = [];
   for (let i = 0; i < totalChunks; i++) {
     const slice = base64.slice(i * chunkSize, (i + 1) * chunkSize);
-    packets.push(`BEAM|${safeName}|${safeType}|${totalChunks}|${i}|${slice}`);
+    packets.push(`BEAM|${sid}|${safeName}|${safeType}|${totalChunks}|${i}|${slice}`);
   }
   return packets;
 }
@@ -162,15 +165,33 @@ export function createPipePackets(
 export function parsePipePacket(rawData: string): PipePacket | null {
   if (!rawData || !rawData.startsWith("BEAM|")) return null;
   const parts = rawData.split("|");
-  if (parts.length < 6) return null;
 
-  const [prefix, fileName, fileType, totalStr, indexStr, payload] = parts;
-  const totalChunks = parseInt(totalStr, 10);
-  const chunkIndex = parseInt(indexStr, 10);
+  if (parts.length === 7) {
+    const [, sessionId, safeName, safeType, totalStr, indexStr, payload] = parts;
+    const totalChunks = parseInt(totalStr, 10);
+    const chunkIndex = parseInt(indexStr, 10);
+    if (isNaN(totalChunks) || isNaN(chunkIndex)) return null;
 
-  if (isNaN(totalChunks) || isNaN(chunkIndex)) return null;
+    let fileName = safeName;
+    let fileType = safeType;
+    try {
+      fileName = decodeURIComponent(safeName);
+      fileType = decodeURIComponent(safeType);
+    } catch {
+      /* fallback */
+    }
 
-  return { fileName, fileType, totalChunks, chunkIndex, payload };
+    return { sessionId, fileName, fileType, totalChunks, chunkIndex, payload };
+  } else if (parts.length >= 6) {
+    const [, fileName, fileType, totalStr, indexStr, payload] = parts;
+    const totalChunks = parseInt(totalStr, 10);
+    const chunkIndex = parseInt(indexStr, 10);
+    if (isNaN(totalChunks) || isNaN(chunkIndex)) return null;
+
+    return { fileName, fileType, totalChunks, chunkIndex, payload };
+  }
+
+  return null;
 }
 
 export async function reassemblePipePackets(

@@ -334,9 +334,9 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
       const vw = video.videoWidth;
       const vh = video.videoHeight;
 
-      // ─── STEP 3: Synchronized 3 FPS (333ms) Auto-Capture Throttle
+      // ─── STEP 3: High-Frequency 100ms Camera Sampling Throttle (3x faster than 300ms display)
       const now = performance.now();
-      if (now - lastScanTimeRef.current < SYNC_CADENCE_MS) return;
+      if (now - lastScanTimeRef.current < 100) return;
       lastScanTimeRef.current = now;
       setTotalSnapshotsTaken((prev) => prev + 1);
 
@@ -375,11 +375,9 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
         if (overlayCanvas && code.location) {
           const olvCtx = overlayCanvas.getContext("2d");
           if (olvCtx) {
-            // Match overlay canvas size to video element display size
             overlayCanvas.width = overlayCanvas.offsetWidth || 640;
             overlayCanvas.height = overlayCanvas.offsetHeight || 480;
             olvCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-            // Scale detection corner points from 640x640 decode space to overlay display space
             const scaleX = overlayCanvas.width / DECODE_WIDTH;
             const scaleY = overlayCanvas.height / DECODE_HEIGHT;
             const pts = [
@@ -397,7 +395,6 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
             olvCtx.shadowColor = "#4edea3";
             olvCtx.shadowBlur = 12;
             olvCtx.stroke();
-            // Auto-clear the outline after 400ms
             if (detectionFlashRef.current) clearTimeout(detectionFlashRef.current);
             detectionFlashRef.current = setTimeout(() => {
               olvCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
@@ -406,12 +403,10 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
         }
 
         // ─── STEP 6b: Route by payload type
-        // Cloud URL QR — show download modal instead of redirecting
         if (code.data.startsWith("http://") || code.data.startsWith("https://")) {
           completedRef.current = true;
           isScanningRef.current = false;
           setStatusBadge("CLOUD FILE DETECTED");
-          // Build a pseudo ReassemblyResult so the CompletionModal can render a download button
           setResult({
             blobUrl: code.data,
             fileName: code.data.split("/").pop()?.split("?")[0] || "download",
@@ -423,18 +418,20 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
           return;
         }
 
-        // Route B: Pipe Protocol QR (BEAM|fileName|fileType|totalChunks|chunkIndex|payload)
+        // Route B: Session-Guarded Pipe Protocol QR (BEAM|sessionId|fileName|fileType|totalChunks|chunkIndex|payload)
         const pipePacket = parsePipePacket(code.data);
         if (pipePacket) {
-          const { fileName, fileType, totalChunks, chunkIndex, payload } = pipePacket;
+          const { sessionId, fileName, fileType, totalChunks, chunkIndex, payload } = pipePacket;
+          const sessionKey = sessionId || fileName;
 
-          if (transmissionIdRef.current !== fileName) {
-            transmissionIdRef.current = fileName;
+          // Reset buffer if a new transmission session starts
+          if (transmissionIdRef.current !== sessionKey) {
+            transmissionIdRef.current = sessionKey;
             totalChunksRef.current = totalChunks;
             receivedPipeMapRef.current.clear();
             setReceivedCount(0);
             setTotalCount(totalChunks);
-            setStatusBadge(`CAPTURING OPTICAL STREAM (${totalChunks} CHUNKS)`);
+            setStatusBadge(`TRANSMISSION DETECTED - CAPTURING CHUNKS... (${totalChunks} TOTAL)`);
           }
 
           if (!receivedPipeMapRef.current.has(chunkIndex)) {
@@ -445,12 +442,24 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
 
             if (count === totalChunks && !completedRef.current) {
               completedRef.current = true;
-              setStatusBadge("UNPACKING OPTICAL PAYLOAD...");
+              setStatusBadge("TRANSMISSION COMPLETE! COMPILING FILE...");
               reassemblePipePackets(receivedPipeMapRef.current, totalChunks, fileName, fileType)
                 .then((res) => {
                   setResult(res);
                   setShowModal(true);
-                  setStatusBadge("OPTICAL STREAM SYNCED & INTACT");
+                  setStatusBadge("FILE COMPILED & VERIFIED SUCCESSFULLY!");
+
+                  // Auto-download trigger
+                  try {
+                    const a = document.createElement("a");
+                    a.href = res.blobUrl;
+                    a.download = res.fileName;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                  } catch {
+                    /* fallback to modal trigger */
+                  }
                 })
                 .catch((err) => {
                   setErrorMsg(err instanceof Error ? err.message : "Reassembly failed");

@@ -157,8 +157,9 @@ export default function Broadcaster() {
       setCompressedSize(compressed.length);
       const mimeType = inferMimeType(selected.name, selected.type);
       
-      // Generate ultra-compact pipe-delimited packets (150-byte slice)
-      const packets = createPipePackets(compressed, selected.name, mimeType, 150);
+      // Generate ultra-low-density pipe-delimited packets (90-byte slice + unique session id)
+      const sessionId = Math.random().toString(36).substring(2, 6);
+      const packets = createPipePackets(compressed, selected.name, mimeType, 90, sessionId);
       setOpticalPackets(packets);
       
       // Also generate standard Chunk objects for backward compatibility
