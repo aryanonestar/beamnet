@@ -534,7 +534,7 @@ export default function Broadcaster() {
                     : "DRAG & DROP SECURE PAYLOAD HERE (UP TO 50 FILES)"}
                 </p>
                 <p className="text-[9px] font-mono text-[#3d494c] text-center">
-                  Private Vercel Blob Store (BEAM-NET / store_Uuhi1JVtHqWZuScC)
+                  Private Encrypted Cloud
                 </p>
                 <input
                   type="file"
@@ -666,7 +666,7 @@ export default function Broadcaster() {
                 ) : (
                   <div className="flex flex-col gap-2">
                     <div className="w-full bg-[#4cd7f6]/10 border border-[#4cd7f6] text-[#4cd7f6] font-mono text-[11px] uppercase tracking-widest py-3 text-center">
-                      {cloudUrl ? "⚡ Instant Auto-Download & Code Active" : "Uploading to Private Store..."}
+                      {cloudUrl ? "⚡ Instant Auto-Download & Code Active" : "Securing in Private Encrypted Cloud..."}
                     </div>
                     {cloudUrl && (
                       <a
@@ -719,7 +719,7 @@ export default function Broadcaster() {
               {/* Canvas / 10x10 Matrix Progress area */}
               <div className="flex-1 flex items-center justify-center bg-[#0e0e10] border border-[#3d494c] relative p-6 min-h-[400px]">
                 <div className="absolute top-3 left-3 text-[10px] font-mono text-[#3d494c]">
-                  {transferMode === "cloud" ? "STORE: store_Uuhi1JVtHqWZuScC" : chunks.length > 0 ? `IDX: ${String(currentIdx).padStart(5, "0")}` : "X: -- Y: --"}
+                  {transferMode === "cloud" ? "STORE: PRIVATE ENCRYPTED CLOUD" : chunks.length > 0 ? `IDX: ${String(currentIdx).padStart(5, "0")}` : "X: -- Y: --"}
                 </div>
                 <div className="absolute bottom-3 right-3 text-[10px] font-mono text-[#3d494c]">
                   {preparing ? "MATRIX-PROGRESS-STREAM" : transferMode === "cloud" ? "PASSKEY-6-DIGIT" : `SEQ: ${String(currentIdx).padStart(5, "0")}`}
@@ -729,7 +729,7 @@ export default function Broadcaster() {
                 {preparing ? (
                   <MatrixProgress
                     progress={uploadProgress}
-                    statusText={transferMode === "cloud" ? "TRANSMITTING TO PRIVATE VERCEL BLOB..." : "COMPRESSING & CHUNKING PAYLOAD..."}
+                    statusText={transferMode === "cloud" ? "SECURING IN PRIVATE ENCRYPTED CLOUD..." : "COMPRESSING & CHUNKING PAYLOAD..."}
                     fileName={file?.name}
                   />
                 ) : (
@@ -835,7 +835,7 @@ export default function Broadcaster() {
             <div className="flex justify-between items-end">
               <div className="flex flex-col">
                 <span className="text-[11px] font-mono uppercase text-[#bcc9cd] mb-1">
-                  {transferMode === "cloud" ? "Private Blob Store Upload" : "Transmission Progress"}
+                  {transferMode === "cloud" ? "Private Encrypted Cloud Upload" : "Transmission Progress"}
                 </span>
                 <span className="text-[18px] font-mono text-[#e5e1e4]">
                   {transferMode === "cloud"

@@ -113,10 +113,10 @@ export default function MethodSelectorModal({
             </div>
             <div>
               <div className="text-[13px] font-mono font-bold text-[#e5e1e4] uppercase tracking-wider group-hover:text-[#4cd7f6] transition-colors">
-                Vercel Cloud Blob
+                Private Encrypted Cloud
               </div>
               <p className="text-[11px] font-mono text-[#869397] mt-1">
-                Cloud Direct Upload (Instant Link). Fast cloud upload returning a single URL QR code.
+                Fast cloud upload returning a single URL QR code.
               </p>
             </div>
           </button>
