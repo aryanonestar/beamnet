@@ -240,13 +240,9 @@ export default function Broadcaster() {
 
   // ── Execute Private Cloud Upload with XHR & Generate 6-Digit Code ──────
   const startCloudUpload = useCallback(async (selected: File) => {
-    if (uploadInProgressRef.current) return;
-    uploadInProgressRef.current = true;
-
     setTransferMode("cloud");
-    setPreparing(true);
     setFallbackNotice("");
-    setUploadProgress(5);
+    setUploadProgressMonotonic(5);
 
     const filesToUpload = selectedFiles.length > 0 ? selectedFiles : [selected];
 
@@ -267,13 +263,14 @@ export default function Broadcaster() {
           ? "https://"
           : "http://";
 
-      // 1. Generate local 6-digit passkey immediately upfront
+      // 1. Generate local 6-digit passkey & QR Data URL IMMEDIATELY (0ms delay)
       const instantPasskey = Math.floor(100000 + Math.random() * 900000).toString();
       setPasskey(instantPasskey);
 
       const batchShareUrl = `${protocol}${activeHost}/scan?code=${instantPasskey}`;
       setCloudUrl(batchShareUrl);
       await generateQrDataUrl(batchShareUrl);
+      setPreparing(false);
 
       let targetFileToUpload: File;
 
@@ -356,7 +353,6 @@ export default function Broadcaster() {
       setIsZipping(false);
       setFallbackNotice(`Upload failed: ${msg}. Please check connection and retry.`);
     } finally {
-      uploadInProgressRef.current = false;
       setTimeout(() => setPreparing(false), 300);
     }
   }, [customHost, generateQrDataUrl, selectedFiles]);
