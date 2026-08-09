@@ -122,13 +122,14 @@ export default function Broadcaster() {
 
   const [opticalPackets, setOpticalPackets] = useState<string[]>([]);
 
-  // ── Render QR to Data URL ─────────────────────────────────
+  // ── Render QR to Data URL (Optimized for Google Lens & Scanner Speed) ──
   const generateQrDataUrl = useCallback(async (content: string) => {
     try {
+      const isUrl = content.startsWith("http://") || content.startsWith("https://");
       const dataUrl = await QRCode.toDataURL(content, {
-        errorCorrectionLevel: "L", // Low error correction = largest QR squares
-        margin: 2,
-        width: 500, // Larger = bigger modules on screen = easier phone camera detection
+        errorCorrectionLevel: isUrl ? "M" : "L", // Medium error correction for URLs (Google Lens recovery)
+        margin: 4, // ISO 18004 4-module quiet zone for instant Google Lens finder pattern detection
+        width: 600, // 600px high-resolution canvas for sharp sub-pixel rendering
         color: { dark: "#000000", light: "#ffffff" },
       });
       setQrDataUrl(dataUrl);
