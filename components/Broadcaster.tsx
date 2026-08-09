@@ -241,8 +241,12 @@ export default function Broadcaster() {
   // ── Execute Private Cloud Upload with XHR & Generate 6-Digit Code ──────
   const startCloudUpload = useCallback(async (selected: File) => {
     setTransferMode("cloud");
+    setPreparing(true);
     setFallbackNotice("");
-    setUploadProgressMonotonic(5);
+    setUploadProgress(5);
+    setPasskey("");
+    setCloudUrl("");
+    setQrDataUrl("");
 
     const filesToUpload = selectedFiles.length > 0 ? selectedFiles : [selected];
 
@@ -262,15 +266,6 @@ export default function Broadcaster() {
           : typeof window !== "undefined" && window.location.protocol.startsWith("https")
           ? "https://"
           : "http://";
-
-      // 1. Generate local 6-digit passkey & QR Data URL IMMEDIATELY (0ms delay)
-      const instantPasskey = Math.floor(100000 + Math.random() * 900000).toString();
-      setPasskey(instantPasskey);
-
-      const batchShareUrl = `${protocol}${activeHost}/scan?code=${instantPasskey}`;
-      setCloudUrl(batchShareUrl);
-      await generateQrDataUrl(batchShareUrl);
-      setPreparing(false);
 
       let targetFileToUpload: File;
 
@@ -323,7 +318,15 @@ export default function Broadcaster() {
 
       setUploadProgressMonotonic(95);
 
-      // 3. Register passkey metadata on backend with a 5-second timeout guard
+      // 3. Generate 6-digit passkey & QR Data URL ONLY WHEN upload succeeds!
+      const instantPasskey = Math.floor(100000 + Math.random() * 900000).toString();
+      setPasskey(instantPasskey);
+
+      const batchShareUrl = `${protocol}${activeHost}/scan?code=${instantPasskey}`;
+      setCloudUrl(batchShareUrl);
+      await generateQrDataUrl(batchShareUrl);
+
+      // 4. Register passkey metadata on backend with a 5-second timeout guard
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
 
