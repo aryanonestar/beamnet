@@ -93,8 +93,11 @@ export async function encryptFileStream(file: File): Promise<{ securedPackage: F
   return { securedPackage, b64KeyHash };
 }
 
+const RAW_CHUNK_SIZE = 1024 * 1024; // 1 MB plaintext chunk
+const ENCRYPTED_CHUNK_SIZE = RAW_CHUNK_SIZE + 12 + 16; // 1MB + 12B IV + 16B GCM Auth Tag
+
 /**
- * Stream-decrypt an encrypted file URL using an extracted key string.
+ * Stream-decrypt an encrypted file URL using exact ENCRYPTED_CHUNK_SIZE boundaries.
  */
 export async function handleDecryptAndDownload(cloudBlobUrl: string, targetFileName: string, keyStr?: string): Promise<string> {
   let extractedKeyStr = keyStr;
@@ -114,26 +117,48 @@ export async function handleDecryptAndDownload(cloudBlobUrl: string, targetFileN
 
   const decryptionKey = await importKeyFromHash(extractedKeyStr);
   const response = await fetch(cloudBlobUrl);
-  if (!response.ok || !response.body) {
-    throw new Error("Failed to fetch encrypted payload from network socket.");
+  if (!response.ok) {
+    throw new Error("Failed to fetch encrypted payload from cloud.");
   }
 
-  const reader = response.body.getReader();
+  const encryptedArrayBuffer = await response.arrayBuffer();
+  const encryptedBytes = new Uint8Array(encryptedArrayBuffer);
+
+  const totalLength = encryptedBytes.byteLength;
   const decryptedSegments: Uint8Array[] = [];
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  let offset = 0;
 
-    if (value.length > 12) {
-      const chunkIV = value.slice(0, 12);
-      const chunkCiphertext = value.slice(12);
+  while (offset < totalLength) {
+    const chunkEnd = Math.min(offset + ENCRYPTED_CHUNK_SIZE, totalLength);
+    const chunkBytes = encryptedBytes.slice(offset, chunkEnd);
 
-      const cleanArrayBuffer = await decryptChunk(chunkCiphertext.buffer, chunkIV, decryptionKey);
-      decryptedSegments.push(new Uint8Array(cleanArrayBuffer));
-    } else {
-      decryptedSegments.push(value);
+    if (chunkBytes.byteLength < 28) {
+      // Skip corrupted trailing bytes less than 28B header tag
+      break;
     }
+
+    const iv = chunkBytes.slice(0, 12);
+    const ciphertext = chunkBytes.slice(12);
+
+    const ciphertextBuffer = ciphertext.buffer.slice(
+      ciphertext.byteOffset,
+      ciphertext.byteOffset + ciphertext.byteLength
+    );
+
+    const ivBuffer = iv.buffer.slice(
+      iv.byteOffset,
+      iv.byteOffset + iv.byteLength
+    );
+
+    const decryptedBuffer = await decryptChunk(
+      ciphertextBuffer,
+      new Uint8Array(ivBuffer),
+      decryptionKey
+    );
+
+    decryptedSegments.push(new Uint8Array(decryptedBuffer));
+    offset += ENCRYPTED_CHUNK_SIZE;
   }
 
   const outputBlob = new Blob(decryptedSegments as unknown as Uint8Array<ArrayBuffer>[], { type: "application/octet-stream" });
