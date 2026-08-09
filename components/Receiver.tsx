@@ -10,6 +10,7 @@ import {
   type ReassemblyResult,
   isTextPreviewable,
 } from "@/lib/chunker";
+import { importKeyFromHash, decryptChunk, handleDecryptAndDownload } from "@/lib/crypto";
 import { cn } from "@/utils/cn";
 import CompletionModal from "@/components/CompletionModal";
 import Link from "next/link";
@@ -67,11 +68,18 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
   const [receivedFiles, setReceivedFiles] = useState<Array<{ name: string; url: string; size: number; type: string }>>([]);
 
   const handleDownloadAll = (fileList: Array<{ url: string; name: string }>) => {
-    fileList.forEach((file, index) => {
+    fileList.forEach(async (file, index) => {
+      let downloadTargetUrl = file.url;
+      try {
+        downloadTargetUrl = await handleDecryptAndDownload(file.url, file.name);
+      } catch (dErr) {
+        console.warn("Direct download fallback:", dErr);
+      }
+
       setTimeout(() => {
         const link = document.createElement("a");
-        link.href = file.url;
-        link.download = file.name;
+        link.href = downloadTargetUrl;
+        link.download = file.name.replace(/\.enc$/, "");
         link.target = "_blank";
         link.rel = "noopener noreferrer";
         document.body.appendChild(link);

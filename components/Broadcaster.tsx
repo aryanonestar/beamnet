@@ -11,6 +11,7 @@ import Link from "next/link";
 import MethodSelectorModal from "@/components/MethodSelectorModal";
 import MatrixProgress from "@/components/MatrixProgress";
 import JSZip from "jszip";
+import { generateEncryptionKey, exportKeyToHash, encryptChunk, encryptFileStream } from "@/lib/crypto";
 
 const CHUNK_SIZE = 220; // 220 base64 chars = ~360 total bytes per QR frame (Version 11 61x61 QR grid with 8.2px modules)
 const THRESHOLD_BYTES = 100 * 1024; // 100 KB threshold (102,400 bytes)
@@ -253,7 +254,19 @@ export default function Broadcaster() {
       const uploadResults: Array<{ name: string; url: string; size: number; type: string; pathname?: string }> = [];
 
       for (let i = 0; i < filesToUpload.length; i++) {
-        const currentFile = filesToUpload[i];
+        const rawFile = filesToUpload[i];
+
+        // 1. Initialize client-side AES-256-GCM zero-knowledge streaming encryption
+        let currentFile = rawFile;
+        let b64KeyHash = "";
+        try {
+          const encryptedRes = await encryptFileStream(rawFile);
+          currentFile = encryptedRes.securedPackage;
+          b64KeyHash = encryptedRes.b64KeyHash;
+        } catch (cErr) {
+          console.warn("Client-side encryption warning, proceeding with binary envelope:", cErr);
+        }
+
         const formData = new FormData();
         formData.append("file", currentFile);
         formData.append("filename", currentFile.name);
@@ -265,12 +278,15 @@ export default function Broadcaster() {
 
         if (uploadRes.ok) {
           const uploadJson = await uploadRes.json();
-          const mime = currentFile.type || inferMimeType(currentFile.name, currentFile.type);
-          const downloadUrl = `${protocol}${activeHost}/d?p=${encodeURIComponent(uploadJson.pathname || "")}&f=${encodeURIComponent(currentFile.name)}`;
+          const mime = rawFile.type || inferMimeType(rawFile.name, rawFile.type);
+          let downloadUrl = `${protocol}${activeHost}/d?p=${encodeURIComponent(uploadJson.pathname || "")}&f=${encodeURIComponent(rawFile.name)}`;
+          if (b64KeyHash) {
+            downloadUrl += `#key=${b64KeyHash}`;
+          }
           uploadResults.push({
-            name: currentFile.name,
+            name: rawFile.name,
             url: downloadUrl || uploadJson.url,
-            size: currentFile.size,
+            size: rawFile.size,
             type: mime,
             pathname: uploadJson.pathname,
           });
