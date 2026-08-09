@@ -80,6 +80,7 @@ export default function Broadcaster() {
   const [cloudUrl, setCloudUrl] = useState<string>("");
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [fallbackNotice, setFallbackNotice] = useState<string>("");
+  const uploadInProgressRef = useRef(false);
 
   // 6-Digit Passkey state
   const [passkey, setPasskey] = useState<string>("");
@@ -234,12 +235,15 @@ export default function Broadcaster() {
 
   // ── Execute Private Cloud Upload with XHR & Generate 6-Digit Code ──────
   const startCloudUpload = useCallback(async (selected: File) => {
+    if (uploadInProgressRef.current) return;
+    uploadInProgressRef.current = true;
+
     setTransferMode("cloud");
     setPreparing(true);
     setFallbackNotice("");
 
     const filesToUpload = selectedFiles.length > 0 ? selectedFiles : [selected];
-    setUploadProgress(5);
+    setUploadProgress(10);
 
     try {
       let activeHost = customHost.trim();
@@ -280,9 +284,9 @@ export default function Broadcaster() {
               const fileWeight = 1 / filesToUpload.length;
               const currentFileProgress = p.loaded / p.total;
               const totalPct = Math.round(
-                15 + (i + currentFileProgress) * fileWeight * 72
+                10 + (i + currentFileProgress) * fileWeight * 82
               );
-              setUploadProgress(Math.min(88, Math.max(15, totalPct)));
+              setUploadProgress(Math.min(92, Math.max(10, totalPct)));
             }
           },
         });
@@ -303,7 +307,7 @@ export default function Broadcaster() {
         throw new Error("No files uploaded successfully");
       }
 
-      setUploadProgress(90);
+      setUploadProgress(95);
 
       // 3. Register passkey metadata on backend with a 5-second timeout guard
       const controller = new AbortController();
@@ -335,9 +339,10 @@ export default function Broadcaster() {
       // REMOVED: Do NOT fall back to Optical QR mode on error!
       setFallbackNotice(`Upload failed: ${msg}. Please check your connection and file size.`);
     } finally {
-      setTimeout(() => setPreparing(false), 400);
+      uploadInProgressRef.current = false;
+      setTimeout(() => setPreparing(false), 300);
     }
-  }, [customHost, generateQrDataUrl, selectedFiles, startOpticalChunking]);
+  }, [customHost, generateQrDataUrl, selectedFiles]);
 
   // ── Process File with 500MB Limit & 100KB Threshold Rule ──
   const processFile = useCallback(async (selected: File) => {
@@ -551,10 +556,13 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
                   <label className="text-[10px] font-mono uppercase text-[#869397]">Target Domain / Host IP:</label>
                   <button
                     onClick={() => {
-                      setCustomHost(DEFAULT_LOCAL_LAN_IP);
-                      if (file) {
-                        if (transferMode === "cloud") startCloudUpload(file);
-                        else startOpticalChunking(file);
+                      const newHost = DEFAULT_LOCAL_LAN_IP;
+                      setCustomHost(newHost);
+                      if (passkey) {
+                        const protocol = typeof window !== "undefined" && window.location.protocol.startsWith("https") ? "https://" : "http://";
+                        const updatedUrl = `${protocol}${newHost}/scan?code=${passkey}`;
+                        setCloudUrl(updatedUrl);
+                        generateQrDataUrl(updatedUrl);
                       }
                     }}
                     className="text-[9px] font-mono text-[#4cd7f6] hover:underline"
@@ -566,10 +574,14 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
                   type="text"
                   value={customHost}
                   onChange={(e) => {
-                    setCustomHost(e.target.value);
-                    if (file) {
-                      if (transferMode === "cloud") startCloudUpload(file);
-                      else startOpticalChunking(file);
+                    const newHost = e.target.value;
+                    setCustomHost(newHost);
+                    if (passkey) {
+                      const protocol = typeof window !== "undefined" && window.location.protocol.startsWith("https") ? "https://" : "http://";
+                      const activeHost = newHost.trim() || (typeof window !== "undefined" ? window.location.host : DEFAULT_LOCAL_LAN_IP);
+                      const updatedUrl = `${protocol}${activeHost}/scan?code=${passkey}`;
+                      setCloudUrl(updatedUrl);
+                      generateQrDataUrl(updatedUrl);
                     }
                   }}
                   placeholder="e.g. beamnet.app or 10.180.96.252:3000"
