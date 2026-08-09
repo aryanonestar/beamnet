@@ -214,20 +214,21 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
       let blobUrl = primaryFile.url;
       let textContent: string | undefined = undefined;
 
-      try {
-        if (primaryFile.url) {
+      // Only fetch into RAM for small text-previewable files (< 2MB).
+      // For large/binary files, use the direct URL to avoid tab freeze.
+      const PREVIEW_SIZE_LIMIT = 2 * 1024 * 1024; // 2 MB
+      if (primaryFile.url && primaryFile.size < PREVIEW_SIZE_LIMIT && isTextPreviewable(primaryFile.type)) {
+        try {
           const blobRes = await fetch(primaryFile.url);
           if (blobRes.ok) {
             const blobData = await blobRes.arrayBuffer();
             const fileBlob = new Blob([blobData], { type: primaryFile.type });
             blobUrl = URL.createObjectURL(fileBlob);
-            if (isTextPreviewable(primaryFile.type)) {
-              textContent = new TextDecoder().decode(blobData);
-            }
+            textContent = new TextDecoder().decode(blobData);
           }
+        } catch {
+          /* fallback to direct URL */
         }
-      } catch {
-        /* fallback to direct URL */
       }
 
       const assembledResult: ReassemblyResult = {

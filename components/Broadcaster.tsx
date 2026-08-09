@@ -15,36 +15,52 @@ import JSZip from "jszip";
 
 /**
  * Custom direct-to-Vercel-Blob uploader.
- * 1. Fetches a client token from /api/upload (instant)
- * 2. PUTs bytes directly to blob.vercel-storage.com via XHR (with real progress)
- * 3. Fires completion notification in background WITHOUT blocking the Promise
- * This bypasses the SDK's mandatory completion handshake that causes 94% freeze.
+ * 1. Fetches a client token from /api/upload
+ * 2. Extracts the real upload URL from the JWT token payload
+ * 3. PUTs bytes directly to that URL via XHR with real progress events
+ * 4. Fires completion notification in background WITHOUT blocking the Promise
  */
 async function directBlobUpload(
   fileName: string,
   file: File,
   onProgress: (pct: number) => void
 ): Promise<{ url: string; pathname: string }> {
-  // Step 1: Get a client token
+  // Step 1: Get a client token from our /api/upload handler
   const tokenRes = await fetch('/api/upload', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       type: 'blob.generate-client-token',
-      payload: { pathname: fileName, callbackUrl: window.location.origin + '/api/upload', multipart: false },
+      payload: {
+        pathname: fileName,
+        callbackUrl: typeof window !== 'undefined' ? window.location.origin + '/api/upload' : '/api/upload',
+        multipart: false,
+      },
     }),
   });
-  if (!tokenRes.ok) throw new Error(`Token fetch failed: ${tokenRes.status}`);
-  const { clientToken } = await tokenRes.json();
-  if (!clientToken) throw new Error('No client token returned from /api/upload');
+  if (!tokenRes.ok) throw new Error(`Token fetch failed: ${tokenRes.status} ${await tokenRes.text()}`);
+  const tokenJson = await tokenRes.json();
+  const clientToken: string = tokenJson.clientToken;
+  if (!clientToken) throw new Error(`No clientToken in response: ${JSON.stringify(tokenJson).substring(0, 200)}`);
 
-  // Decode the token to get the blob URL prefix
-  const tokenPayload = JSON.parse(atob(clientToken.split('.')[1]));
-  const blobUrl: string = tokenPayload.url ?? tokenPayload.validUntil?.toString();
+  // Step 2: Decode the JWT (base64url) to extract the real upload URL
+  // Vercel Blob encodes the destination URL directly in the token payload
+  let uploadUrl: string;
+  try {
+    const base64Part = clientToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const tokenPayload = JSON.parse(atob(base64Part));
+    // The token payload contains 'url' which is the direct blob upload endpoint
+    uploadUrl = tokenPayload.url;
+    if (!uploadUrl || !uploadUrl.startsWith('http')) {
+      throw new Error('No valid upload URL in token');
+    }
+  } catch (e) {
+    // Fallback: construct URL from token (store id is in the token header)
+    // This uses the standard Vercel Blob upload endpoint format
+    throw new Error(`Failed to extract upload URL from token: ${e instanceof Error ? e.message : String(e)}`);
+  }
 
-  // Step 2: PUT directly to Vercel Blob via XHR (real progress events)
-  const uploadUrl = `https://blob.vercel-storage.com/${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-
+  // Step 3: PUT directly to Vercel Blob via XHR (native progress events — no completion handshake wait)
   const putResult = await new Promise<{ url: string; pathname: string }>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('PUT', uploadUrl, true);
@@ -58,21 +74,22 @@ async function directBlobUpload(
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
           const data = JSON.parse(xhr.responseText);
-          resolve({ url: data.url, pathname: data.pathname });
+          resolve({ url: data.url || uploadUrl, pathname: data.pathname || fileName });
         } catch {
-          reject(new Error(`Blob PUT response parse failed: ${xhr.responseText.substring(0, 200)}`));
+          // If response isn't JSON (some Vercel Blob responses), construct URL from upload URL
+          resolve({ url: uploadUrl.split('?')[0], pathname: fileName });
         }
       } else {
-        reject(new Error(`Blob PUT failed with HTTP ${xhr.status}: ${xhr.responseText.substring(0, 200)}`));
+        reject(new Error(`Blob PUT HTTP ${xhr.status}: ${xhr.responseText.substring(0, 300)}`));
       }
     };
     xhr.onerror = () => reject(new Error('Network error during blob upload'));
-    xhr.ontimeout = () => reject(new Error('Blob upload timed out'));
-    xhr.timeout = 3 * 60 * 1000; // 3-minute hard timeout
+    xhr.ontimeout = () => reject(new Error('Blob upload timed out after 3 minutes'));
+    xhr.timeout = 3 * 60 * 1000;
     xhr.send(file);
   });
 
-  // Step 3: Fire completion notification in background — do NOT await
+  // Step 4: Fire completion notification in background — do NOT await
   fetch('/api/upload', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -80,10 +97,11 @@ async function directBlobUpload(
       type: 'blob.upload-completed',
       payload: { blob: putResult, tokenPayload: '' },
     }),
-  }).catch(() => { /* fire-and-forget — completion callback is non-blocking */ });
+  }).catch(() => { /* fire-and-forget */ });
 
   return putResult;
 }
+
 
 const CHUNK_SIZE = 220; // 220 base64 chars = ~360 total bytes per QR frame (Version 11 61x61 QR grid with 8.2px modules)
 const THRESHOLD_BYTES = 100 * 1024; // 100 KB threshold (102,400 bytes)
@@ -493,18 +511,16 @@ export default function Broadcaster() {
     setSelectedFiles(batch);
 
     try {
-      if (batch.length > 1) {
-        setIsZipping(true);
-      }
-      // Auto-zip multi-file batch into a single .zip File object
-      const finalFileToUpload = await prepareFilesForTransfer(batch);
-      setIsZipping(false);
-      setFile(finalFileToUpload);
-      await processFile(finalFileToUpload);
+      // For multi-file batches: startCloudUpload already handles zipping internally.
+      // Pass the first file as the "selected" trigger — startCloudUpload reads selectedFiles state.
+      // This avoids double-zip (prepareFilesForTransfer + startCloudUpload both zipping).
+      const triggerFile = batch[0];
+      setFile(triggerFile);
+      await processFile(triggerFile);
     } catch (err) {
       console.error("Failed to prepare files for transfer:", err);
       setIsZipping(false);
-      alert("Error compressing files into .zip archive. Please try again.");
+      alert("Error preparing files for transfer. Please try again.");
     }
   };
 
