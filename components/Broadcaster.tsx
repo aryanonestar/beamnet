@@ -78,6 +78,12 @@ export default function Broadcaster() {
   // Cloud Mode state
   const [cloudUrl, setCloudUrl] = useState<string>("");
   const [uploadProgress, setUploadProgress] = useState<number>(0);
+
+  // Helper: Monotonic Progress Setter (Progress can NEVER move backwards)
+  const setUploadProgressMonotonic = useCallback((newVal: number) => {
+    setUploadProgress((prev) => Math.max(prev, Math.min(100, Math.floor(newVal))));
+  }, []);
+
   const [fallbackNotice, setFallbackNotice] = useState<string>("");
   const uploadInProgressRef = useRef(false);
 
@@ -280,7 +286,7 @@ export default function Broadcaster() {
         const zipBlob = await zip.generateAsync(
           { type: "blob", compression: "STORE" },
           (metadata) => {
-            setUploadProgress(Math.floor(metadata.percent * 0.2));
+            setUploadProgressMonotonic(metadata.percent * 0.2);
           }
         );
 
@@ -293,7 +299,7 @@ export default function Broadcaster() {
         setFile(targetFileToUpload);
       }
 
-      setUploadProgress(20);
+      setUploadProgressMonotonic(20);
 
       // 2. Direct Client-to-Vercel-Blob Upload (bypasses Next.js 4.5MB Serverless Body Limit)
       const blob = await vercelClientUpload(targetFileToUpload.name, targetFileToUpload, {
@@ -301,7 +307,7 @@ export default function Broadcaster() {
         handleUploadUrl: "/api/upload",
         onUploadProgress: (p) => {
           const calculatedProgress = 20 + Math.floor((p.percentage / 100) * 75);
-          setUploadProgress(Math.min(95, Math.max(20, calculatedProgress)));
+          setUploadProgressMonotonic(calculatedProgress);
         },
       });
 
@@ -318,7 +324,7 @@ export default function Broadcaster() {
         },
       ];
 
-      setUploadProgress(95);
+      setUploadProgressMonotonic(95);
 
       // 3. Register passkey metadata on backend with a 5-second timeout guard
       const controller = new AbortController();
@@ -343,7 +349,7 @@ export default function Broadcaster() {
         console.warn("[BEAM-NET] Passkey API sync timed out or failed. Using instant client passkey fallback:", apiErr);
       }
 
-      setUploadProgress(100);
+      setUploadProgressMonotonic(100);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Upload failed";
       console.error("Private Encrypted Cloud upload failed:", msg);
