@@ -241,9 +241,9 @@ export default function Broadcaster() {
     setTransferMode("cloud");
     setPreparing(true);
     setFallbackNotice("");
+    setUploadProgress(5);
 
     const filesToUpload = selectedFiles.length > 0 ? selectedFiles : [selected];
-    setUploadProgress(10);
 
     try {
       let activeHost = customHost.trim();
@@ -262,7 +262,7 @@ export default function Broadcaster() {
           ? "https://"
           : "http://";
 
-      // 1. Generate local 6-digit passkey immediately upfront so UI never hangs on "Generating..."
+      // 1. Generate local 6-digit passkey immediately upfront
       const instantPasskey = Math.floor(100000 + Math.random() * 900000).toString();
       setPasskey(instantPasskey);
 
@@ -270,42 +270,51 @@ export default function Broadcaster() {
       setCloudUrl(batchShareUrl);
       await generateQrDataUrl(batchShareUrl);
 
-      const uploadResults: Array<{ name: string; url: string; size: number; type: string; pathname?: string }> = [];
+      let targetFileToUpload: File;
 
-      for (let i = 0; i < filesToUpload.length; i++) {
-        const rawFile = filesToUpload[i];
+      // Bundle multi-files into client-side .zip with real-time progress (0% to 20%)
+      if (filesToUpload.length > 1) {
+        setIsZipping(true);
+        const zip = new JSZip();
+        filesToUpload.forEach((f) => zip.file(f.name, f));
 
-        // Direct browser-to-storage client upload (bypasses Next.js 4.5MB API body limit & HTTP 413 error)
-        const blob = await vercelClientUpload(rawFile.name, rawFile, {
-          access: "public",
-          handleUploadUrl: "/api/upload",
-          onUploadProgress: (p) => {
-            if (p.total > 0) {
-              const fileWeight = 1 / filesToUpload.length;
-              const currentFileProgress = p.loaded / p.total;
-              const totalPct = Math.round(
-                10 + (i + currentFileProgress) * fileWeight * 82
-              );
-              setUploadProgress(Math.min(92, Math.max(10, totalPct)));
-            }
-          },
+        const zipBlob = await zip.generateAsync({ type: "blob" }, (metadata) => {
+          setUploadProgress(Math.floor(metadata.percent * 0.2));
         });
 
-        const mime = rawFile.type || inferMimeType(rawFile.name, rawFile.type);
-        const downloadUrl = `${protocol}${activeHost}/d?p=${encodeURIComponent(blob.pathname || "")}&f=${encodeURIComponent(rawFile.name)}`;
+        const zipFileName = `beamnet_files_${filesToUpload.length}_items.zip`;
+        targetFileToUpload = new File([zipBlob], zipFileName, { type: "application/zip" });
+        setIsZipping(false);
+        setFile(targetFileToUpload);
+      } else {
+        targetFileToUpload = selected;
+        setFile(targetFileToUpload);
+      }
 
-        uploadResults.push({
-          name: rawFile.name,
+      setUploadProgress(20);
+
+      // 2. Direct Client-to-Vercel-Blob Upload (bypasses Next.js 4.5MB Serverless Body Limit)
+      const blob = await vercelClientUpload(targetFileToUpload.name, targetFileToUpload, {
+        access: "public",
+        handleUploadUrl: "/api/upload",
+        onUploadProgress: (p) => {
+          const calculatedProgress = 20 + Math.floor((p.percentage / 100) * 75);
+          setUploadProgress(Math.min(95, Math.max(20, calculatedProgress)));
+        },
+      });
+
+      const mime = targetFileToUpload.type || inferMimeType(targetFileToUpload.name, targetFileToUpload.type);
+      const downloadUrl = `${protocol}${activeHost}/d?p=${encodeURIComponent(blob.pathname || "")}&f=${encodeURIComponent(targetFileToUpload.name)}`;
+
+      const uploadResults = [
+        {
+          name: targetFileToUpload.name,
           url: downloadUrl || blob.url || "",
-          size: rawFile.size,
+          size: targetFileToUpload.size,
           type: mime,
           pathname: blob.pathname,
-        });
-      }
-
-      if (uploadResults.length === 0) {
-        throw new Error("No files uploaded successfully");
-      }
+        },
+      ];
 
       setUploadProgress(95);
 
@@ -336,8 +345,8 @@ export default function Broadcaster() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Upload failed";
       console.error("Private Encrypted Cloud upload failed:", msg);
-      // REMOVED: Do NOT fall back to Optical QR mode on error!
-      setFallbackNotice(`Upload failed: ${msg}. Please check your connection and file size.`);
+      setIsZipping(false);
+      setFallbackNotice(`Upload failed: ${msg}. Please check connection and retry.`);
     } finally {
       uploadInProgressRef.current = false;
       setTimeout(() => setPreparing(false), 300);
