@@ -159,12 +159,12 @@ export default function Broadcaster() {
       setCompressedSize(compressed.length);
       const mimeType = inferMimeType(selected.name, selected.type);
       
-      // Generate ultra-low-density pipe-delimited packets (90-byte slice + unique session id)
+      // Adaptive chunk size: 180 base64 chars for optimal balance of frame count and module size
+      const opticalChunkSize = compressed.length > 50 * 1024 ? 220 : 180;
       const sessionId = Math.random().toString(36).substring(2, 6);
-      const packets = createPipePackets(compressed, selected.name, mimeType, 90, sessionId);
+      const packets = createPipePackets(compressed, selected.name, mimeType, opticalChunkSize, sessionId);
       setOpticalPackets(packets);
       
-      // Also generate standard Chunk objects for backward compatibility
       const generated = createChunks(compressed, CHUNK_SIZE, {
         id: generateId(),
         mimeType,
@@ -173,56 +173,62 @@ export default function Broadcaster() {
       });
       setChunks(generated);
       setCurrentIdx(0);
-
-      // Upload payloads to blob store so the 6-digit code covers all files in batch
-      const uploadResults: Array<{ name: string; url: string; size: number; type: string; pathname?: string }> = [];
-      for (const f of filesToUpload) {
-        try {
-          const formData = new FormData();
-          formData.append("file", f);
-          formData.append("filename", f.name);
-          const uploadRes = await fetch("/api/blob/upload", {
-            method: "POST",
-            body: formData,
-          });
-          if (uploadRes.ok) {
-            const uploadJson = await uploadRes.json();
-            uploadResults.push({
-              name: f.name,
-              url: uploadJson.url || "",
-              size: f.size,
-              type: f.type || inferMimeType(f.name, f.type),
-              pathname: uploadJson.pathname || "",
-            });
-          }
-        } catch (uErr) {
-          console.warn("Background upload warning for passkey target:", uErr);
-        }
-      }
-
-      if (uploadResults.length > 0) {
-        const codeRes = await fetch("/api/code", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ files: uploadResults }),
-        });
-
-        if (codeRes.ok) {
-          const codeData = await codeRes.json();
-          setPasskey(codeData.code);
-          setPasskeyExpiresAt(codeData.expiresAt);
-        }
-      }
-
       setUploadProgress(100);
 
+      // Render first QR frame IMMEDIATELY (0ms delay)
       if (packets.length > 0) {
         await generateQrDataUrl(packets[0]);
       }
+      setPreparing(false);
+
+      // Asynchronous non-blocking background passkey registration (does not delay QR rendering)
+      (async () => {
+        try {
+          const uploadResults: Array<{ name: string; url: string; size: number; type: string; pathname?: string }> = [];
+          for (const f of filesToUpload) {
+            try {
+              const formData = new FormData();
+              formData.append("file", f);
+              formData.append("filename", f.name);
+              const uploadRes = await fetch("/api/blob/upload", {
+                method: "POST",
+                body: formData,
+              });
+              if (uploadRes.ok) {
+                const uploadJson = await uploadRes.json();
+                uploadResults.push({
+                  name: f.name,
+                  url: uploadJson.url || "",
+                  size: f.size,
+                  type: f.type || inferMimeType(f.name, f.type),
+                  pathname: uploadJson.pathname || "",
+                });
+              }
+            } catch (uErr) {
+              console.warn("Background upload warning for passkey target:", uErr);
+            }
+          }
+
+          if (uploadResults.length > 0) {
+            const codeRes = await fetch("/api/code", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ files: uploadResults }),
+            });
+
+            if (codeRes.ok) {
+              const codeData = await codeRes.json();
+              setPasskey(codeData.code);
+              setPasskeyExpiresAt(codeData.expiresAt);
+            }
+          }
+        } catch {
+          /* background fallback ignore */
+        }
+      })();
     } catch (err) {
       console.error("Compression error:", err);
-    } finally {
-      setTimeout(() => setPreparing(false), 300);
+      setPreparing(false);
     }
   }, [generateQrDataUrl, selectedFiles]);
 
