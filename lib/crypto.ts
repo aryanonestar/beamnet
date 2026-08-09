@@ -65,7 +65,10 @@ const CRYPTO_CHUNK_SIZE = 1024 * 1024; // Strict 1 MB RAM limit per chunk loop
 /**
  * Encrypt a File in 1MB streaming slices. Returns encrypted File & URL-safe key hash.
  */
-export async function encryptFileStream(file: File): Promise<{ securedPackage: File; b64KeyHash: string }> {
+export async function encryptFileStream(
+  file: File,
+  onProgress?: (pct: number) => void
+): Promise<{ securedPackage: File; b64KeyHash: string }> {
   const cryptoKey = await generateEncryptionKey();
   const b64KeyHash = await exportKeyToHash(cryptoKey);
 
@@ -85,6 +88,10 @@ export async function encryptFileStream(file: File): Promise<{ securedPackage: F
     packageBuffer.set(new Uint8Array(encrypted), iv.length);
 
     compiledBlobSegments.push(new Blob([packageBuffer]));
+
+    if (onProgress) {
+      onProgress(Math.round(((i + 1) / totalSlices) * 100));
+    }
   }
 
   const finalEncryptedBlob = new Blob(compiledBlobSegments, { type: "application/octet-stream" });

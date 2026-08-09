@@ -258,16 +258,51 @@ export default function Broadcaster() {
           ? "https://"
           : "http://";
 
-      const uploadResults: Array<{ name: string; url: string; size: number; type: string; pathname?: string }> = [];
+      const uploadWithXhr = (
+        formData: FormData,
+        fileIdx: number,
+        totalFiles: number
+      ): Promise<{ url?: string; pathname?: string }> => {
+        return new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("POST", "/api/blob/upload");
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable && e.total > 0) {
+              const fileWeight = 1 / totalFiles;
+              const currentFileProgress = e.loaded / e.total;
+              const totalPct = Math.round(
+                15 + (fileIdx + currentFileProgress) * fileWeight * 72
+              );
+              setUploadProgress(Math.min(88, Math.max(15, totalPct)));
+            }
+          };
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try {
+                resolve(JSON.parse(xhr.responseText));
+              } catch (pErr) {
+                reject(pErr);
+              }
+            } else {
+              reject(new Error(`Upload HTTP ${xhr.status}`));
+            }
+          };
+          xhr.onerror = () => reject(new Error("Network upload error"));
+          xhr.send(formData);
+        });
+      };
 
       for (let i = 0; i < filesToUpload.length; i++) {
         const rawFile = filesToUpload[i];
 
-        // 1. Initialize client-side AES-256-GCM zero-knowledge streaming encryption
+        // 1. Client-side AES-256-GCM zero-knowledge streaming encryption with live progress
         let currentFile = rawFile;
         let b64KeyHash = "";
         try {
-          const encryptedRes = await encryptFileStream(rawFile);
+          const encryptedRes = await encryptFileStream(rawFile, (encPct) => {
+            const encTotalPct = Math.round(5 + (i + encPct / 100) * (10 / filesToUpload.length));
+            setUploadProgress(encTotalPct);
+          });
           currentFile = encryptedRes.securedPackage;
           b64KeyHash = encryptedRes.b64KeyHash;
         } catch (cErr) {
@@ -278,27 +313,20 @@ export default function Broadcaster() {
         formData.append("file", currentFile);
         formData.append("filename", currentFile.name);
 
-        const uploadRes = await fetch("/api/blob/upload", {
-          method: "POST",
-          body: formData,
-        });
+        const uploadJson = await uploadWithXhr(formData, i, filesToUpload.length);
 
-        if (uploadRes.ok) {
-          const uploadJson = await uploadRes.json();
-          const mime = rawFile.type || inferMimeType(rawFile.name, rawFile.type);
-          let downloadUrl = `${protocol}${activeHost}/d?p=${encodeURIComponent(uploadJson.pathname || "")}&f=${encodeURIComponent(rawFile.name)}`;
-          if (b64KeyHash) {
-            downloadUrl += `#key=${b64KeyHash}`;
-          }
-          uploadResults.push({
-            name: rawFile.name,
-            url: downloadUrl || uploadJson.url,
-            size: rawFile.size,
-            type: mime,
-            pathname: uploadJson.pathname,
-          });
+        const mime = rawFile.type || inferMimeType(rawFile.name, rawFile.type);
+        let downloadUrl = `${protocol}${activeHost}/d?p=${encodeURIComponent(uploadJson.pathname || "")}&f=${encodeURIComponent(rawFile.name)}`;
+        if (b64KeyHash) {
+          downloadUrl += `#key=${b64KeyHash}`;
         }
-        setUploadProgress(Math.round(((i + 1) / filesToUpload.length) * 80) + 10);
+        uploadResults.push({
+          name: rawFile.name,
+          url: downloadUrl || uploadJson.url || "",
+          size: rawFile.size,
+          type: mime,
+          pathname: uploadJson.pathname,
+        });
       }
 
       if (uploadResults.length === 0) {
