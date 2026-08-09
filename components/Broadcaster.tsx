@@ -51,8 +51,7 @@ export default function Broadcaster() {
 
     const zipBlob = await zip.generateAsync({
       type: "blob",
-      compression: "DEFLATE",
-      compressionOptions: { level: 6 },
+      compression: "STORE",
     });
 
     const zipFileName = `beamnet_files_${files.length}_items.zip`;
@@ -278,9 +277,12 @@ export default function Broadcaster() {
         const zip = new JSZip();
         filesToUpload.forEach((f) => zip.file(f.name, f));
 
-        const zipBlob = await zip.generateAsync({ type: "blob" }, (metadata) => {
-          setUploadProgress(Math.floor(metadata.percent * 0.2));
-        });
+        const zipBlob = await zip.generateAsync(
+          { type: "blob", compression: "STORE" },
+          (metadata) => {
+            setUploadProgress(Math.floor(metadata.percent * 0.2));
+          }
+        );
 
         const zipFileName = `beamnet_files_${filesToUpload.length}_items.zip`;
         targetFileToUpload = new File([zipBlob], zipFileName, { type: "application/zip" });
