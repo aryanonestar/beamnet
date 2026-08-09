@@ -258,6 +258,8 @@ export default function Broadcaster() {
           ? "https://"
           : "http://";
 
+      const uploadResults: Array<{ name: string; url: string; size: number; type: string; pathname?: string }> = [];
+
       const uploadWithXhr = (
         formData: FormData,
         fileIdx: number,
