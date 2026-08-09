@@ -293,15 +293,25 @@ export default function Broadcaster() {
 
       setUploadProgressMonotonic(20);
 
-      // 2. Direct Client-to-Vercel-Blob Upload (bypasses Next.js 4.5MB Serverless Body Limit)
-      const blob = await vercelClientUpload(targetFileToUpload.name, targetFileToUpload, {
+      // 2. Direct Client-to-Vercel-Blob Upload
+      // multipart: true = Vercel's recommended chunked upload for large files.
+      // It avoids the single-shot PUT timeout and handles the completion handshake reliably.
+      // Race with a 3-minute hard timeout to prevent infinite hang.
+      const uploadPromise = vercelClientUpload(targetFileToUpload.name, targetFileToUpload, {
         access: "public",
         handleUploadUrl: "/api/upload",
+        multipart: true,
         onUploadProgress: (p) => {
           const calculatedProgress = 20 + Math.floor((p.percentage / 100) * 75);
           setUploadProgressMonotonic(calculatedProgress);
         },
       });
+
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Upload timed out after 3 minutes. Please retry.")), 3 * 60 * 1000)
+      );
+
+      const blob = await Promise.race([uploadPromise, timeoutPromise]);
 
       const mime = targetFileToUpload.type || inferMimeType(targetFileToUpload.name, targetFileToUpload.type);
       const downloadUrl = `${protocol}${activeHost}/d?p=${encodeURIComponent(blob.pathname || "")}&f=${encodeURIComponent(targetFileToUpload.name)}`;
