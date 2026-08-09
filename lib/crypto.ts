@@ -115,8 +115,14 @@ export async function handleDecryptAndDownload(cloudBlobUrl: string, targetFileN
     return cloudBlobUrl;
   }
 
+  // CRITICAL FIX: Ensure URL points to raw binary endpoint (/api/d), not HTML landing page (/d)
+  let rawBinaryFetchUrl = cloudBlobUrl.split("#")[0];
+  if (rawBinaryFetchUrl.includes("/d?")) {
+    rawBinaryFetchUrl = rawBinaryFetchUrl.replace("/d?", "/api/d?");
+  }
+
   const decryptionKey = await importKeyFromHash(extractedKeyStr);
-  const response = await fetch(cloudBlobUrl);
+  const response = await fetch(rawBinaryFetchUrl);
   if (!response.ok) {
     throw new Error("Failed to fetch encrypted payload from cloud.");
   }
