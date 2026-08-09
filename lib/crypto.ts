@@ -44,7 +44,7 @@ export async function importKeyFromHash(hashKey: string): Promise<CryptoKey> {
 export async function encryptChunk(chunk: ArrayBuffer, key: CryptoKey) {
   const iv = window.crypto.getRandomValues(new Uint8Array(12));
   const encrypted = await window.crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
+    { name: "AES-GCM", iv: iv as unknown as BufferSource },
     key,
     chunk
   );
@@ -53,9 +53,8 @@ export async function encryptChunk(chunk: ArrayBuffer, key: CryptoKey) {
 
 // Decrypt an individual encrypted ArrayBuffer slice using its prepended IV
 export async function decryptChunk(encrypted: ArrayBuffer, iv: Uint8Array, key: CryptoKey) {
-  const ivBuffer = new Uint8Array(iv.buffer, iv.byteOffset, iv.byteLength);
   return await window.crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: ivBuffer },
+    { name: "AES-GCM", iv: iv as unknown as BufferSource },
     key,
     encrypted
   );
