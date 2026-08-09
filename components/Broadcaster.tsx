@@ -11,7 +11,79 @@ import Link from "next/link";
 import MethodSelectorModal from "@/components/MethodSelectorModal";
 import MatrixProgress from "@/components/MatrixProgress";
 import JSZip from "jszip";
-import { upload as vercelClientUpload } from "@vercel/blob/client";
+// @vercel/blob/client import removed — using custom XHR uploader to avoid blocking completion handshake
+
+/**
+ * Custom direct-to-Vercel-Blob uploader.
+ * 1. Fetches a client token from /api/upload (instant)
+ * 2. PUTs bytes directly to blob.vercel-storage.com via XHR (with real progress)
+ * 3. Fires completion notification in background WITHOUT blocking the Promise
+ * This bypasses the SDK's mandatory completion handshake that causes 94% freeze.
+ */
+async function directBlobUpload(
+  fileName: string,
+  file: File,
+  onProgress: (pct: number) => void
+): Promise<{ url: string; pathname: string }> {
+  // Step 1: Get a client token
+  const tokenRes = await fetch('/api/upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type: 'blob.generate-client-token',
+      payload: { pathname: fileName, callbackUrl: window.location.origin + '/api/upload', multipart: false },
+    }),
+  });
+  if (!tokenRes.ok) throw new Error(`Token fetch failed: ${tokenRes.status}`);
+  const { clientToken } = await tokenRes.json();
+  if (!clientToken) throw new Error('No client token returned from /api/upload');
+
+  // Decode the token to get the blob URL prefix
+  const tokenPayload = JSON.parse(atob(clientToken.split('.')[1]));
+  const blobUrl: string = tokenPayload.url ?? tokenPayload.validUntil?.toString();
+
+  // Step 2: PUT directly to Vercel Blob via XHR (real progress events)
+  const uploadUrl = `https://blob.vercel-storage.com/${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+
+  const putResult = await new Promise<{ url: string; pathname: string }>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', uploadUrl, true);
+    xhr.setRequestHeader('Authorization', `Bearer ${clientToken}`);
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+    xhr.setRequestHeader('x-add-random-suffix', '1');
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress((e.loaded / e.total) * 100);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const data = JSON.parse(xhr.responseText);
+          resolve({ url: data.url, pathname: data.pathname });
+        } catch {
+          reject(new Error(`Blob PUT response parse failed: ${xhr.responseText.substring(0, 200)}`));
+        }
+      } else {
+        reject(new Error(`Blob PUT failed with HTTP ${xhr.status}: ${xhr.responseText.substring(0, 200)}`));
+      }
+    };
+    xhr.onerror = () => reject(new Error('Network error during blob upload'));
+    xhr.ontimeout = () => reject(new Error('Blob upload timed out'));
+    xhr.timeout = 3 * 60 * 1000; // 3-minute hard timeout
+    xhr.send(file);
+  });
+
+  // Step 3: Fire completion notification in background — do NOT await
+  fetch('/api/upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type: 'blob.upload-completed',
+      payload: { blob: putResult, tokenPayload: '' },
+    }),
+  }).catch(() => { /* fire-and-forget — completion callback is non-blocking */ });
+
+  return putResult;
+}
 
 const CHUNK_SIZE = 220; // 220 base64 chars = ~360 total bytes per QR frame (Version 11 61x61 QR grid with 8.2px modules)
 const THRESHOLD_BYTES = 100 * 1024; // 100 KB threshold (102,400 bytes)
@@ -293,25 +365,15 @@ export default function Broadcaster() {
 
       setUploadProgressMonotonic(20);
 
-      // 2. Direct Client-to-Vercel-Blob Upload
-      // multipart: true = Vercel's recommended chunked upload for large files.
-      // It avoids the single-shot PUT timeout and handles the completion handshake reliably.
-      // Race with a 3-minute hard timeout to prevent infinite hang.
-      const uploadPromise = vercelClientUpload(targetFileToUpload.name, targetFileToUpload, {
-        access: "public",
-        handleUploadUrl: "/api/upload",
-        multipart: true,
-        onUploadProgress: (p) => {
-          const calculatedProgress = 20 + Math.floor((p.percentage / 100) * 75);
+      // 2. Direct raw XHR upload — bypasses @vercel/blob/client completion handshake freeze
+      const blob = await directBlobUpload(
+        targetFileToUpload.name,
+        targetFileToUpload,
+        (pct) => {
+          const calculatedProgress = 20 + Math.floor((pct / 100) * 75);
           setUploadProgressMonotonic(calculatedProgress);
-        },
-      });
-
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Upload timed out after 3 minutes. Please retry.")), 3 * 60 * 1000)
+        }
       );
-
-      const blob = await Promise.race([uploadPromise, timeoutPromise]);
 
       const mime = targetFileToUpload.type || inferMimeType(targetFileToUpload.name, targetFileToUpload.type);
       const downloadUrl = `${protocol}${activeHost}/d?p=${encodeURIComponent(blob.pathname || "")}&f=${encodeURIComponent(targetFileToUpload.name)}`;
