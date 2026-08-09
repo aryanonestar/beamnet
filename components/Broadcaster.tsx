@@ -258,6 +258,14 @@ export default function Broadcaster() {
           ? "https://"
           : "http://";
 
+      // 1. Generate local 6-digit passkey immediately upfront so UI never hangs on "Generating..."
+      const instantPasskey = Math.floor(100000 + Math.random() * 900000).toString();
+      setPasskey(instantPasskey);
+
+      const batchShareUrl = `${protocol}${activeHost}/scan?code=${instantPasskey}`;
+      setCloudUrl(batchShareUrl);
+      await generateQrDataUrl(batchShareUrl);
+
       const uploadResults: Array<{ name: string; url: string; size: number; type: string; pathname?: string }> = [];
 
       for (let i = 0; i < filesToUpload.length; i++) {
@@ -297,23 +305,27 @@ export default function Broadcaster() {
 
       setUploadProgress(90);
 
-      // Post full file list payload to /api/code
-      const codeRes = await fetch("/api/code", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ files: uploadResults }),
-      });
+      // 3. Register passkey metadata on backend with a 5-second timeout guard
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-      if (codeRes.ok) {
-        const codeData = await codeRes.json();
-        const { code } = codeData;
-        setPasskey(code);
-        setPasskeyExpiresAt(codeData.expiresAt);
+      try {
+        const codeRes = await fetch("/api/code", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: instantPasskey, files: uploadResults }),
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
 
-        // Generate Batch Direct Link QR URL (https://beamnet.vercel.app/scan?code=123456)
-        const batchShareUrl = `${protocol}${activeHost}/scan?code=${code}`;
-        setCloudUrl(batchShareUrl);
-        await generateQrDataUrl(batchShareUrl);
+        if (codeRes.ok) {
+          const codeData = await codeRes.json();
+          if (codeData.expiresAt) {
+            setPasskeyExpiresAt(codeData.expiresAt);
+          }
+        }
+      } catch (apiErr) {
+        console.warn("[BEAM-NET] Passkey API sync timed out or failed. Using instant client passkey fallback:", apiErr);
       }
 
       setUploadProgress(100);

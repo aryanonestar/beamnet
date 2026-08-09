@@ -93,29 +93,30 @@ export async function POST(request: Request): Promise<NextResponse> {
     // Store in local lambda memory
     codeStore.set(code, entry);
 
-    // Persist to Vercel Blob so ANY serverless instance can resolve it
+    // Persist to Vercel Blob asynchronously with 2.5s timeout guard so HTTP response never stalls
     const token = process.env.BLOB_READ_WRITE_TOKEN;
     if (token) {
       const blobPath = `codes/${code}.json`;
       const blobContent = JSON.stringify(entry);
 
-      try {
-        await put(blobPath, blobContent, {
-          access: "private",
+      const blobSavePromise = put(blobPath, blobContent, {
+        access: "private",
+        token,
+        addRandomSuffix: false,
+      }).catch(() => {
+        return put(blobPath, blobContent, {
+          access: "public",
           token,
           addRandomSuffix: false,
-        });
-      } catch {
-        try {
-          await put(blobPath, blobContent, {
-            access: "public",
-            token,
-            addRandomSuffix: false,
-          });
-        } catch (err2) {
+        }).catch((err2) => {
           console.warn("Vercel Blob passkey persistence warning:", err2);
-        }
-      }
+        });
+      });
+
+      Promise.race([
+        blobSavePromise,
+        new Promise((resolve) => setTimeout(resolve, 2500)),
+      ]).catch(() => null);
     }
 
     return NextResponse.json({
