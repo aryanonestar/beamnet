@@ -296,16 +296,29 @@ export default function Broadcaster() {
 
       setUploadProgressMonotonic(20);
 
-      // 2. Direct client-to-Vercel-Blob upload (SDK — no longer freezes because
-      // /api/upload now immediately ACKs the completion event without blocking)
-      const blob = await vercelClientUpload(targetFileToUpload.name, targetFileToUpload, {
+      // 2. Direct client-to-Vercel-Blob upload
+      // multipart: true — splits large files into ~5MB parts so each part gets
+      // its own server ACK. Avoids one giant single PUT that hangs at 94%.
+      // Promise.race with 4min timeout ensures the UI always recovers.
+      const uploadPromise = vercelClientUpload(targetFileToUpload.name, targetFileToUpload, {
         access: "public",
         handleUploadUrl: "/api/upload",
+        multipart: true,
         onUploadProgress: (p) => {
           const calculatedProgress = 20 + Math.floor((p.percentage / 100) * 75);
           setUploadProgressMonotonic(calculatedProgress);
         },
       });
+
+      const uploadTimeout = new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error("Upload timed out — please check your connection and retry.")),
+          4 * 60 * 1000
+        )
+      );
+
+      const blob = await Promise.race([uploadPromise, uploadTimeout]);
+
 
       const mime = targetFileToUpload.type || inferMimeType(targetFileToUpload.name, targetFileToUpload.type);
       const downloadUrl = `${protocol}${activeHost}/d?p=${encodeURIComponent(blob.pathname || "")}&f=${encodeURIComponent(targetFileToUpload.name)}`;
