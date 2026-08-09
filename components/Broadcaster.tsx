@@ -11,6 +11,7 @@ import Link from "next/link";
 import MethodSelectorModal from "@/components/MethodSelectorModal";
 import MatrixProgress from "@/components/MatrixProgress";
 import JSZip from "jszip";
+import { upload as vercelClientUpload } from "@vercel/blob/client";
 
 const CHUNK_SIZE = 220; // 220 base64 chars = ~360 total bytes per QR frame (Version 11 61x61 QR grid with 8.2px modules)
 const THRESHOLD_BYTES = 100 * 1024; // 100 KB threshold (102,400 bytes)
@@ -259,58 +260,34 @@ export default function Broadcaster() {
 
       const uploadResults: Array<{ name: string; url: string; size: number; type: string; pathname?: string }> = [];
 
-      const uploadWithXhr = (
-        formData: FormData,
-        fileIdx: number,
-        totalFiles: number
-      ): Promise<{ url?: string; pathname?: string }> => {
-        return new Promise((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.open("POST", "/api/blob/upload");
-          xhr.upload.onprogress = (e) => {
-            if (e.lengthComputable && e.total > 0) {
-              const fileWeight = 1 / totalFiles;
-              const currentFileProgress = e.loaded / e.total;
-              const totalPct = Math.round(
-                15 + (fileIdx + currentFileProgress) * fileWeight * 72
-              );
-              setUploadProgress(Math.min(88, Math.max(15, totalPct)));
-            }
-          };
-          xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) {
-              try {
-                resolve(JSON.parse(xhr.responseText));
-              } catch (pErr) {
-                reject(pErr);
-              }
-            } else {
-              reject(new Error(`Upload HTTP ${xhr.status}`));
-            }
-          };
-          xhr.onerror = () => reject(new Error("Network upload error"));
-          xhr.send(formData);
-        });
-      };
-
       for (let i = 0; i < filesToUpload.length; i++) {
         const rawFile = filesToUpload[i];
 
-        const formData = new FormData();
-        formData.append("file", rawFile);
-        formData.append("filename", rawFile.name);
-
-        const uploadJson = await uploadWithXhr(formData, i, filesToUpload.length);
+        // Direct browser-to-storage client upload (bypasses Next.js 4.5MB API body limit & HTTP 413 error)
+        const blob = await vercelClientUpload(rawFile.name, rawFile, {
+          access: "public",
+          handleUploadUrl: "/api/upload",
+          onUploadProgress: (p) => {
+            if (p.total > 0) {
+              const fileWeight = 1 / filesToUpload.length;
+              const currentFileProgress = p.loaded / p.total;
+              const totalPct = Math.round(
+                15 + (i + currentFileProgress) * fileWeight * 72
+              );
+              setUploadProgress(Math.min(88, Math.max(15, totalPct)));
+            }
+          },
+        });
 
         const mime = rawFile.type || inferMimeType(rawFile.name, rawFile.type);
-        const downloadUrl = `${protocol}${activeHost}/d?p=${encodeURIComponent(uploadJson.pathname || "")}&f=${encodeURIComponent(rawFile.name)}`;
+        const downloadUrl = `${protocol}${activeHost}/d?p=${encodeURIComponent(blob.pathname || "")}&f=${encodeURIComponent(rawFile.name)}`;
 
         uploadResults.push({
           name: rawFile.name,
-          url: downloadUrl || uploadJson.url || "",
+          url: downloadUrl || blob.url || "",
           size: rawFile.size,
           type: mime,
-          pathname: uploadJson.pathname,
+          pathname: blob.pathname,
         });
       }
 
@@ -342,9 +319,9 @@ export default function Broadcaster() {
       setUploadProgress(100);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Upload failed";
-      console.warn("Private Encrypted Cloud upload failed — falling back to Optical Stream:", msg);
-      setFallbackNotice(`Private Encrypted Cloud upload skipped (${msg}) — automatically switched to Air-Gapped Optical QR Stream.`);
-      await startOpticalChunking(selected);
+      console.error("Private Encrypted Cloud upload failed:", msg);
+      // REMOVED: Do NOT fall back to Optical QR mode on error!
+      setFallbackNotice(`Upload failed: ${msg}. Please check your connection and file size.`);
     } finally {
       setTimeout(() => setPreparing(false), 400);
     }
