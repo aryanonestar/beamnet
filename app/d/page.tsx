@@ -4,8 +4,6 @@ import React, { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { Download, CheckCircle, ShieldCheck } from "lucide-react";
 
-import { handleDecryptAndDownload } from "@/lib/crypto";
-
 function DownloadContent() {
   const searchParams = useSearchParams();
   const pathname = searchParams.get("p") || searchParams.get("pathname") || "";
@@ -13,43 +11,18 @@ function DownloadContent() {
   const filename = rawFilename.replace(/\.enc$/, "");
 
   const [downloadStarted, setDownloadStarted] = useState(false);
-  const [isEncrypted, setIsEncrypted] = useState(false);
-  const [decryptedUrl, setDecryptedUrl] = useState<string | null>(null);
 
-  const downloadApiUrl = `/api/d?p=${encodeURIComponent(pathname)}&f=${encodeURIComponent(rawFilename)}`;
+  const downloadApiUrl = `/api/d?p=${encodeURIComponent(pathname)}&f=${encodeURIComponent(filename)}`;
 
   useEffect(() => {
-    if (!pathname) return;
-
-    const hash = window.location.hash;
-    const hasKey = hash.includes("key=");
-
-    if (hasKey) {
-      setIsEncrypted(true);
-      setDownloadStarted(true);
-
-      handleDecryptAndDownload(downloadApiUrl, filename)
-        .then((blobUrl) => {
-          setDecryptedUrl(blobUrl);
-          const a = document.createElement("a");
-          a.href = blobUrl;
-          a.download = filename;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-        })
-        .catch((err) => {
-          console.error("Zero-knowledge decryption error on download page:", err);
-          window.location.href = downloadApiUrl;
-        });
-    } else {
+    if (pathname) {
       setDownloadStarted(true);
       const timer = setTimeout(() => {
         window.location.href = downloadApiUrl;
       }, 300);
       return () => clearTimeout(timer);
     }
-  }, [pathname, downloadApiUrl, filename]);
+  }, [pathname, downloadApiUrl]);
 
   if (!pathname) {
     return (

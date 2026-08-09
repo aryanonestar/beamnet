@@ -11,7 +11,6 @@ import Link from "next/link";
 import MethodSelectorModal from "@/components/MethodSelectorModal";
 import MatrixProgress from "@/components/MatrixProgress";
 import JSZip from "jszip";
-import { generateEncryptionKey, exportKeyToHash, encryptChunk, encryptFileStream } from "@/lib/crypto";
 
 const CHUNK_SIZE = 220; // 220 base64 chars = ~360 total bytes per QR frame (Version 11 61x61 QR grid with 8.2px modules)
 const THRESHOLD_BYTES = 100 * 1024; // 100 KB threshold (102,400 bytes)
@@ -297,31 +296,15 @@ export default function Broadcaster() {
       for (let i = 0; i < filesToUpload.length; i++) {
         const rawFile = filesToUpload[i];
 
-        // 1. Client-side AES-256-GCM zero-knowledge streaming encryption with live progress
-        let currentFile = rawFile;
-        let b64KeyHash = "";
-        try {
-          const encryptedRes = await encryptFileStream(rawFile, (encPct) => {
-            const encTotalPct = Math.round(5 + (i + encPct / 100) * (10 / filesToUpload.length));
-            setUploadProgress(encTotalPct);
-          });
-          currentFile = encryptedRes.securedPackage;
-          b64KeyHash = encryptedRes.b64KeyHash;
-        } catch (cErr) {
-          console.warn("Client-side encryption warning, proceeding with binary envelope:", cErr);
-        }
-
         const formData = new FormData();
-        formData.append("file", currentFile);
-        formData.append("filename", currentFile.name);
+        formData.append("file", rawFile);
+        formData.append("filename", rawFile.name);
 
         const uploadJson = await uploadWithXhr(formData, i, filesToUpload.length);
 
         const mime = rawFile.type || inferMimeType(rawFile.name, rawFile.type);
-        let downloadUrl = `${protocol}${activeHost}/d?p=${encodeURIComponent(uploadJson.pathname || "")}&f=${encodeURIComponent(rawFile.name)}`;
-        if (b64KeyHash) {
-          downloadUrl += `#key=${b64KeyHash}`;
-        }
+        const downloadUrl = `${protocol}${activeHost}/d?p=${encodeURIComponent(uploadJson.pathname || "")}&f=${encodeURIComponent(rawFile.name)}`;
+
         uploadResults.push({
           name: rawFile.name,
           url: downloadUrl || uploadJson.url || "",
