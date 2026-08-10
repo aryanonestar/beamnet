@@ -1,6 +1,6 @@
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { NextResponse } from "next/server";
-import { s3, BUCKET } from "@/lib/s3";
+import { getS3Client, BUCKET } from "@/lib/s3";
 
 export async function GET(request: Request): Promise<Response> {
   const { searchParams } = new URL(request.url);
@@ -13,20 +13,16 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   try {
+    const s3 = getS3Client();
     const result = await s3.send(
-      new GetObjectCommand({
-        Bucket: BUCKET,
-        Key: pathname,
-      })
+      new GetObjectCommand({ Bucket: BUCKET, Key: pathname })
     );
 
     if (!result.Body) {
       return NextResponse.json({ error: "File not found" }, { status: 404 });
     }
 
-    const stream = result.Body.transformToWebStream();
-
-    return new Response(stream, {
+    return new Response(result.Body.transformToWebStream(), {
       headers: {
         "Content-Type": result.ContentType || "application/octet-stream",
         "Content-Disposition": `attachment; filename="${encodeURIComponent(filename)}"`,

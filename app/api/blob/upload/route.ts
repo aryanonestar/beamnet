@@ -1,6 +1,6 @@
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { NextResponse } from "next/server";
-import { s3, BUCKET } from "@/lib/s3";
+import { getS3Client, BUCKET } from "@/lib/s3";
 import { randomBytes } from "crypto";
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -13,7 +13,6 @@ export async function POST(request: Request): Promise<NextResponse> {
       return NextResponse.json({ error: "No file provided in form data" }, { status: 400 });
     }
 
-    // Add random suffix to prevent collisions (mirrors Vercel Blob addRandomSuffix)
     const suffix = randomBytes(4).toString("hex");
     const ext = filename.includes(".") ? filename.slice(filename.lastIndexOf(".")) : "";
     const base = filename.includes(".") ? filename.slice(0, filename.lastIndexOf(".")) : filename;
@@ -22,6 +21,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
+    const s3 = getS3Client();
     await s3.send(
       new PutObjectCommand({
         Bucket: BUCKET,
@@ -31,7 +31,6 @@ export async function POST(request: Request): Promise<NextResponse> {
       })
     );
 
-    // pathname mirrors the Vercel Blob pathname field used downstream
     const pathname = key;
     const url = `https://${BUCKET}.s3.amazonaws.com/${key}`;
 

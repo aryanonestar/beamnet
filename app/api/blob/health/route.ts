@@ -1,6 +1,6 @@
 import { HeadBucketCommand } from "@aws-sdk/client-s3";
 import { NextResponse } from "next/server";
-import { s3, BUCKET } from "@/lib/s3";
+import { getS3Client, BUCKET } from "@/lib/s3";
 
 export async function GET(): Promise<NextResponse> {
   const region = process.env.APP_AWS_REGION ?? "us-east-1";
@@ -15,6 +15,7 @@ export async function GET(): Promise<NextResponse> {
   }
 
   try {
+    const s3 = getS3Client();
     await s3.send(new HeadBucketCommand({ Bucket: BUCKET }));
     return NextResponse.json({ ready: true, bucket: BUCKET, region });
   } catch (error) {

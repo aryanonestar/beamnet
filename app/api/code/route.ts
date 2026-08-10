@@ -1,6 +1,6 @@
 import { PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { NextResponse } from "next/server";
-import { s3, BUCKET } from "@/lib/s3";
+import { getS3Client, BUCKET } from "@/lib/s3";
 
 interface CodeEntry {
   code: string;
@@ -12,7 +12,6 @@ interface CodeEntry {
   expiresAt: number;
 }
 
-// In-process cache for this serverless instance
 const codeStore = new Map<string, CodeEntry>();
 
 function cleanupExpiredCodes() {
@@ -33,7 +32,6 @@ function generate6DigitCode(): string {
   return code;
 }
 
-// ── POST /api/code ── generate passkey & persist to S3
 export async function POST(request: Request): Promise<NextResponse> {
   try {
     const body = await request.json();
@@ -44,7 +42,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     const code = generate6DigitCode();
-    const expiresAt = Date.now() + 15 * 60 * 1000; // 15 min TTL
+    const expiresAt = Date.now() + 15 * 60 * 1000;
 
     const entry: CodeEntry = {
       code,
@@ -58,8 +56,8 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     codeStore.set(code, entry);
 
-    // Persist to S3 so any cold Lambda instance can resolve the code
     try {
+      const s3 = getS3Client();
       await s3.send(
         new PutObjectCommand({
           Bucket: BUCKET,
@@ -72,19 +70,13 @@ export async function POST(request: Request): Promise<NextResponse> {
       console.warn("S3 passkey persistence warning:", s3Err);
     }
 
-    return NextResponse.json({
-      success: true,
-      code,
-      expiresAt,
-      ttlSeconds: 15 * 60,
-    });
+    return NextResponse.json({ success: true, code, expiresAt, ttlSeconds: 15 * 60 });
   } catch (error) {
     console.error("Code generation error:", error);
     return NextResponse.json({ error: (error as Error).message }, { status: 500 });
   }
 }
 
-// ── GET /api/code?code=XXXXXX ── resolve passkey
 export async function GET(request: Request): Promise<NextResponse> {
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code")?.trim();
@@ -97,37 +89,26 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   let entry: CodeEntry | undefined = codeStore.get(code);
 
-  // Not in local memory — fetch from S3
   if (!entry) {
+    const s3 = getS3Client();
     try {
       const result = await s3.send(
-        new GetObjectCommand({
-          Bucket: BUCKET,
-          Key: `codes/${code}.json`,
-        })
+        new GetObjectCommand({ Bucket: BUCKET, Key: `codes/${code}.json` })
       );
       if (result.Body) {
-        const text = await result.Body.transformToString();
-        entry = JSON.parse(text) as CodeEntry;
+        entry = JSON.parse(await result.Body.transformToString()) as CodeEntry;
       }
     } catch {
-      // Key not found — try list prefix scan as fallback
       try {
         const listResult = await s3.send(
-          new ListObjectsV2Command({
-            Bucket: BUCKET,
-            Prefix: `codes/${code}`,
-            MaxKeys: 1,
-          })
+          new ListObjectsV2Command({ Bucket: BUCKET, Prefix: `codes/${code}`, MaxKeys: 1 })
         );
-        if (listResult.Contents && listResult.Contents.length > 0) {
-          const key = listResult.Contents[0].Key!;
+        if (listResult.Contents?.length) {
           const getResult = await s3.send(
-            new GetObjectCommand({ Bucket: BUCKET, Key: key })
+            new GetObjectCommand({ Bucket: BUCKET, Key: listResult.Contents[0].Key! })
           );
           if (getResult.Body) {
-            const text = await getResult.Body.transformToString();
-            entry = JSON.parse(text) as CodeEntry;
+            entry = JSON.parse(await getResult.Body.transformToString()) as CodeEntry;
           }
         }
       } catch (listErr) {

@@ -480,7 +480,7 @@ export default function Broadcaster() {
                     : "DRAG & DROP SECURE PAYLOAD HERE"}
                 </p>
                 <p className="text-[9px] font-mono text-[#3d494c] text-center">
-                  Private Vercel Blob Store (BEAM-NET / store_Uuhi1JVtHqWZuScC)
+                  Private S3 Store (BEAM-NET / {process.env.NEXT_PUBLIC_S3_BUCKET ?? "beamnet-storage"})
                 </p>
                 <input type="file" onChange={handleFileChange} className="hidden" />
               </label>
@@ -627,7 +627,7 @@ export default function Broadcaster() {
               {/* Canvas / 10x10 Matrix Progress area */}
               <div className="flex-1 flex items-center justify-center bg-[#0e0e10] border border-[#3d494c] relative p-6 min-h-[400px]">
                 <div className="absolute top-3 left-3 text-[10px] font-mono text-[#3d494c]">
-                  {transferMode === "cloud" ? "STORE: store_Uuhi1JVtHqWZuScC" : chunks.length > 0 ? `IDX: ${String(currentIdx).padStart(5, "0")}` : "X: -- Y: --"}
+                  {transferMode === "cloud" ? "STORE: beamnet-storage (S3)" : chunks.length > 0 ? `IDX: ${String(currentIdx).padStart(5, "0")}` : "X: -- Y: --"}
                 </div>
                 <div className="absolute bottom-3 right-3 text-[10px] font-mono text-[#3d494c]">
                   {preparing ? "MATRIX-PROGRESS-STREAM" : transferMode === "cloud" ? "PASSKEY-6-DIGIT" : `SEQ: ${String(currentIdx).padStart(5, "0")}`}
@@ -637,7 +637,7 @@ export default function Broadcaster() {
                 {preparing ? (
                   <MatrixProgress
                     progress={uploadProgress}
-                    statusText={transferMode === "cloud" ? "TRANSMITTING TO PRIVATE VERCEL BLOB..." : "COMPRESSING & CHUNKING PAYLOAD..."}
+                    statusText={transferMode === "cloud" ? "TRANSMITTING TO PRIVATE S3 STORE..." : "COMPRESSING & CHUNKING PAYLOAD..."}
                     fileName={file?.name}
                   />
                 ) : (
