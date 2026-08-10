@@ -1,5 +1,6 @@
+import { PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { NextResponse } from "next/server";
-import { put, get, list } from "@vercel/blob";
+import { s3, BUCKET } from "@/lib/s3";
 
 interface CodeEntry {
   code: string;
@@ -11,20 +12,16 @@ interface CodeEntry {
   expiresAt: number;
 }
 
-// Global server memory store for 6-digit codes
+// In-process cache for this serverless instance
 const codeStore = new Map<string, CodeEntry>();
 
-// Cleanup expired entries periodically
 function cleanupExpiredCodes() {
   const now = Date.now();
   for (const [code, entry] of codeStore.entries()) {
-    if (now > entry.expiresAt) {
-      codeStore.delete(code);
-    }
+    if (now > entry.expiresAt) codeStore.delete(code);
   }
 }
 
-// Generate unique random 6-digit code (100000 - 999999)
 function generate6DigitCode(): string {
   cleanupExpiredCodes();
   let code: string;
@@ -36,7 +33,7 @@ function generate6DigitCode(): string {
   return code;
 }
 
-// POST /api/code: Store payload metadata & return 6-digit passkey
+// ── POST /api/code ── generate passkey & persist to S3
 export async function POST(request: Request): Promise<NextResponse> {
   try {
     const body = await request.json();
@@ -47,7 +44,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     const code = generate6DigitCode();
-    const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes TTL
+    const expiresAt = Date.now() + 15 * 60 * 1000; // 15 min TTL
 
     const entry: CodeEntry = {
       code,
@@ -59,34 +56,20 @@ export async function POST(request: Request): Promise<NextResponse> {
       expiresAt,
     };
 
-    // Store in local lambda memory
     codeStore.set(code, entry);
 
-    // Persist to Vercel Blob so ANY serverless instance can resolve it
-    const token = process.env.BLOB_READ_WRITE_TOKEN;
-    if (token) {
-      const blobPath = `codes/${code}.json`;
-      const blobContent = JSON.stringify(entry);
-
-      try {
-        // Try private access first (BEAM-NET store is private)
-        await put(blobPath, blobContent, {
-          access: "private",
-          token,
-          addRandomSuffix: false,
-        });
-      } catch {
-        try {
-          // Fallback to public access
-          await put(blobPath, blobContent, {
-            access: "public",
-            token,
-            addRandomSuffix: false,
-          });
-        } catch (err2) {
-          console.warn("Vercel Blob passkey persistence warning:", err2);
-        }
-      }
+    // Persist to S3 so any cold Lambda instance can resolve the code
+    try {
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: BUCKET,
+          Key: `codes/${code}.json`,
+          Body: JSON.stringify(entry),
+          ContentType: "application/json",
+        })
+      );
+    } catch (s3Err) {
+      console.warn("S3 passkey persistence warning:", s3Err);
     }
 
     return NextResponse.json({
@@ -101,7 +84,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 }
 
-// GET /api/code?code=849201: Resolve 6-digit passkey to file payload
+// ── GET /api/code?code=XXXXXX ── resolve passkey
 export async function GET(request: Request): Promise<NextResponse> {
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code")?.trim();
@@ -114,46 +97,46 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   let entry: CodeEntry | undefined = codeStore.get(code);
 
-  // If not in local memory, check Vercel Blob persistent store
-  const token = process.env.BLOB_READ_WRITE_TOKEN;
-  if (!entry && token) {
-    const blobPath = `codes/${code}.json`;
+  // Not in local memory — fetch from S3
+  if (!entry) {
     try {
-      // 1. Direct SDK get
-      const blobResult = await get(blobPath, { access: "private", token }).catch(() => null);
-      if (blobResult && blobResult.stream) {
-        const text = await new Response(blobResult.stream as unknown as ReadableStream).text();
+      const result = await s3.send(
+        new GetObjectCommand({
+          Bucket: BUCKET,
+          Key: `codes/${code}.json`,
+        })
+      );
+      if (result.Body) {
+        const text = await result.Body.transformToString();
         entry = JSON.parse(text) as CodeEntry;
       }
     } catch {
-      /* ignore SDK get error */
-    }
-
-    // 2. Fallback to list prefix scan if direct get failed
-    if (!entry) {
+      // Key not found — try list prefix scan as fallback
       try {
-        const { blobs } = await list({
-          prefix: `codes/${code}`,
-          token,
-        });
-
-        if (blobs.length > 0) {
-          const downloadUrl = blobs[0].downloadUrl || blobs[0].url;
-          const res = await fetch(downloadUrl, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-
-          if (res.ok) {
-            entry = (await res.json()) as CodeEntry;
+        const listResult = await s3.send(
+          new ListObjectsV2Command({
+            Bucket: BUCKET,
+            Prefix: `codes/${code}`,
+            MaxKeys: 1,
+          })
+        );
+        if (listResult.Contents && listResult.Contents.length > 0) {
+          const key = listResult.Contents[0].Key!;
+          const getResult = await s3.send(
+            new GetObjectCommand({ Bucket: BUCKET, Key: key })
+          );
+          if (getResult.Body) {
+            const text = await getResult.Body.transformToString();
+            entry = JSON.parse(text) as CodeEntry;
           }
         }
       } catch (listErr) {
-        console.warn("Vercel Blob passkey list error:", listErr);
+        console.warn("S3 passkey list fallback error:", listErr);
       }
     }
 
     if (entry && entry.expiresAt > Date.now()) {
-      codeStore.set(code, entry); // Cache in local lambda memory
+      codeStore.set(code, entry);
     }
   }
 

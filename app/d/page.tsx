@@ -56,7 +56,7 @@ function DownloadContent() {
             <ShieldCheck className="text-[#4edea3]" size={28} />
           </div>
           <h1 className="text-2xl font-bold text-[#4cd7f6] tracking-tight uppercase">BEAM-NET SECURE DOWNLOAD</h1>
-          <p className="text-[11px] font-mono text-[#869397]">Private Vercel Blob Store Transfer</p>
+          <p className="text-[11px] font-mono text-[#869397]">Private S3 Secure Transfer</p>
         </div>
 
         {/* File Card */}
