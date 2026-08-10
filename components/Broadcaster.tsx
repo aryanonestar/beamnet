@@ -429,14 +429,9 @@ export default function Broadcaster() {
 
       setUploadProgressMonotonic(95);
 
-      // 6. Build final Receiver Share URL & render QR Code (Includes direct URL parameters for instant landing!)
-      let shareTargetUrl = `${protocol}${activeHost}/scan?code=${instantPasskey}`;
-      if (finalFileUrl && finalFileUrl.startsWith("http")) {
-        shareTargetUrl += `&url=${encodeURIComponent(finalFileUrl)}&name=${encodeURIComponent(targetFileToUpload.name)}`;
-      }
-      if (publicMetaUrl) {
-        shareTargetUrl += `&meta=${encodeURIComponent(publicMetaUrl)}`;
-      }
+      // 6. Build clean, short Receiver Share URL & render scannable QR Code
+      // Short ~35-char URL produces a Version 3 (29x29) QR grid — instantly scannable by any mobile phone camera!
+      const shareTargetUrl = `${protocol}${activeHost}/scan?code=${instantPasskey}`;
 
       setPasskey(instantPasskey);
       setCloudUrl(shareTargetUrl);
