@@ -11,8 +11,7 @@ import Link from "next/link";
 import MethodSelectorModal from "@/components/MethodSelectorModal";
 import MatrixProgress from "@/components/MatrixProgress";
 import JSZip from "jszip";
-// Using plain XHR to /api/upload which server-side streams into Vercel Blob.
-// No SDK client handshake, no completion callbacks, no cold-start freezes.
+import { upload as vercelClientUpload } from "@vercel/blob/client";
 
 
 const CHUNK_SIZE = 220; // 220 base64 chars = ~360 total bytes per QR frame (Version 11 61x61 QR grid with 8.2px modules)
@@ -324,45 +323,19 @@ export default function Broadcaster() {
 
       setUploadProgressMonotonic(25);
 
-      // 2. Upload binary file to Vercel Blob via XHR (tracks real progress 25% -> 80%)
-      const blobResult = await new Promise<{ url: string; pathname: string }>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", "/api/upload", true);
-        xhr.setRequestHeader("x-filename", targetFileToUpload.name);
-        xhr.setRequestHeader("Content-Type", mime);
-        xhr.timeout = 180000;
-
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) {
-            const pct = 25 + Math.floor((e.loaded / e.total) * 55);
-            setUploadProgressMonotonic(pct);
-          }
-        };
-
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            try {
-              const data = JSON.parse(xhr.responseText);
-              if (data.url) {
-                resolve({ url: data.url, pathname: data.pathname || "" });
-              } else {
-                reject(new Error("No URL returned from upload route"));
-              }
-            } catch {
-              reject(new Error("Failed to parse upload response"));
-            }
-          } else {
-            reject(new Error(`Upload failed with HTTP ${xhr.status}`));
-          }
-        };
-
-        xhr.onerror = () => reject(new Error("Network error during file upload"));
-        xhr.ontimeout = () => reject(new Error("Upload timed out"));
-        xhr.send(targetFileToUpload);
+      // 2. Direct browser-to-storage upload via @vercel/blob/client
+      // Bypasses Next.js serverless body limits (fixes HTTP 413 Payload Too Large forever!)
+      const blobResult = await vercelClientUpload(targetFileToUpload.name, targetFileToUpload, {
+        access: "public",
+        handleUploadUrl: "/api/upload",
+        onUploadProgress: (p) => {
+          setUploadProgressMonotonic(25 + Math.floor((p.percentage / 100) * 55));
+        },
       }).catch((uploadErr) => {
-        console.warn("[BEAM-NET] Server upload warning, using local URL fallback:", uploadErr);
+        console.warn("[BEAM-NET] Direct storage upload warning:", uploadErr);
         return { url: localBlobUrl, pathname: "" };
       });
+
 
       setUploadProgressMonotonic(85);
 

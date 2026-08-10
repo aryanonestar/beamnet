@@ -1,36 +1,40 @@
-import { put } from '@vercel/blob';
+import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 import { NextResponse } from 'next/server';
 
-export const runtime = 'nodejs';
-// No body size limit on route handlers — they stream via Node.js
-// (Only Server Actions have the 4.5MB default limit)
-
 export async function POST(request: Request): Promise<NextResponse> {
+  const body = (await request.json()) as HandleUploadBody;
+
+  // Fire-and-forget instant ACK for upload completion callback to prevent cold-start freezes
+  if ((body as { type?: string }).type === 'blob.upload-completed') {
+    handleUpload({
+      body,
+      request,
+      onBeforeGenerateToken: async () => ({ allowedContentTypes: ['*/*'] }),
+      onUploadCompleted: async () => {},
+    }).catch(() => null);
+    return NextResponse.json({ ok: true });
+  }
+
   try {
-    const contentType = request.headers.get('content-type') || 'application/octet-stream';
-    const fileName = request.headers.get('x-filename') || 'upload';
-    const token = process.env.BLOB_READ_WRITE_TOKEN;
-
-    if (!token) {
-      return NextResponse.json({ error: 'Storage not configured' }, { status: 500 });
-    }
-
-    // Stream the request body directly into Vercel Blob (server-side put)
-    // This avoids ALL client-SDK issues: no completion callbacks, no cold-start races,
-    // no JWT token extraction, no multipart orchestration on the client.
-    const blob = await put(fileName, request.body as ReadableStream, {
-      access: 'public',
-      token,
-      addRandomSuffix: true,
-      contentType,
+    const jsonResponse = await handleUpload({
+      body,
+      request,
+      onBeforeGenerateToken: async () => {
+        return {
+          allowedContentTypes: ['*/*'],
+          maximumSizeInBytes: 500 * 1024 * 1024, // 500 MB max limit
+          tokenPayload: JSON.stringify({ uploadedAt: new Date().toISOString() }),
+        };
+      },
+      onUploadCompleted: async () => {},
     });
 
-    return NextResponse.json({ url: blob.url, pathname: blob.pathname });
+    return NextResponse.json(jsonResponse);
   } catch (error) {
-    console.error('[BEAM-NET] Stream upload error:', error);
+    console.error('[BEAM-NET] Token generation error:', error);
     return NextResponse.json(
       { error: (error as Error).message },
-      { status: 500 }
+      { status: 400 }
     );
   }
 }
