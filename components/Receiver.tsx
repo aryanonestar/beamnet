@@ -192,16 +192,18 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
         }
       }
 
-      // 2. Read directly from client memory (same device zero-network lookup)
+      // 2. Read directly from client memory if exact code match exists
       if (!data) {
         const localRecordStr =
           sessionStorage.getItem(`beamnet_passkey_${codeToTest}`) ||
-          localStorage.getItem(`beamnet_passkey_${codeToTest}`) ||
-          localStorage.getItem(`beamnet_last_file`);
+          localStorage.getItem(`beamnet_passkey_${codeToTest}`);
 
         if (localRecordStr) {
           try {
-            data = JSON.parse(localRecordStr);
+            const parsed = JSON.parse(localRecordStr);
+            if (parsed && (parsed.code === codeToTest || !parsed.code)) {
+              data = parsed;
+            }
           } catch {
             /* ignore JSON parse error */
           }
@@ -223,11 +225,12 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
       // 4. Try /api/code endpoint
       if (!data) {
         const res = await fetch(`/api/code?code=${encodeURIComponent(codeToTest)}`);
-        if (!res.ok) {
-          const errJson = await res.json();
+        if (res.ok) {
+          data = await res.json();
+        } else {
+          const errJson = await res.json().catch(() => ({}));
           throw new Error(errJson.error || "Passkey not found or expired");
         }
-        data = await res.json();
       }
 
       setStatusBadge("FETCHING PAYLOAD METADATA...");
