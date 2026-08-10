@@ -11,9 +11,8 @@ import Link from "next/link";
 import MethodSelectorModal from "@/components/MethodSelectorModal";
 import MatrixProgress from "@/components/MatrixProgress";
 import JSZip from "jszip";
-import { upload as vercelClientUpload } from "@vercel/blob/client";
-// NOTE: /api/upload now responds instantly to blob.upload-completed events (fire-and-forget),
-// so vercelClientUpload() no longer hangs at 94% waiting for a cold serverless completion callback.
+// Using plain XHR to /api/upload which server-side streams into Vercel Blob.
+// No SDK client handshake, no completion callbacks, no cold-start freezes.
 
 
 const CHUNK_SIZE = 220; // 220 base64 chars = ~360 total bytes per QR frame (Version 11 61x61 QR grid with 8.2px modules)
@@ -296,29 +295,45 @@ export default function Broadcaster() {
 
       setUploadProgressMonotonic(20);
 
-      // 2. Direct client-to-Vercel-Blob upload
-      // multipart: true — splits large files into ~5MB parts so each part gets
-      // its own server ACK. Avoids one giant single PUT that hangs at 94%.
-      // Promise.race with 4min timeout ensures the UI always recovers.
-      const uploadPromise = vercelClientUpload(targetFileToUpload.name, targetFileToUpload, {
-        access: "public",
-        handleUploadUrl: "/api/upload",
-        multipart: true,
-        onUploadProgress: (p) => {
-          const calculatedProgress = 20 + Math.floor((p.percentage / 100) * 75);
-          setUploadProgressMonotonic(calculatedProgress);
-        },
+      // 2. Upload via XHR → /api/upload (server streams directly into Vercel Blob)
+      // Plain XHR: real upload progress events, no SDK callbacks, no cold-start races.
+      const blob = await new Promise<{ url: string; pathname: string }>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/api/upload', true);
+        xhr.setRequestHeader('x-filename', targetFileToUpload.name);
+        xhr.setRequestHeader('Content-Type', targetFileToUpload.type || 'application/octet-stream');
+        xhr.timeout = 5 * 60 * 1000; // 5-minute hard timeout
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            const pct = 20 + Math.floor((e.loaded / e.total) * 75);
+            setUploadProgressMonotonic(pct);
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              const data = JSON.parse(xhr.responseText);
+              if (data.url && data.pathname) {
+                resolve({ url: data.url, pathname: data.pathname });
+              } else {
+                reject(new Error(data.error || 'Upload response missing url/pathname'));
+              }
+            } catch {
+              reject(new Error(`Upload response parse error: ${xhr.responseText.substring(0, 200)}`));
+            }
+          } else {
+            try {
+              const err = JSON.parse(xhr.responseText);
+              reject(new Error(err.error || `Upload failed: HTTP ${xhr.status}`));
+            } catch {
+              reject(new Error(`Upload failed: HTTP ${xhr.status}`));
+            }
+          }
+        };
+        xhr.onerror = () => reject(new Error('Network error — check your connection and retry.'));
+        xhr.ontimeout = () => reject(new Error('Upload timed out after 5 minutes — retry with a smaller file.'));
+        xhr.send(targetFileToUpload);
       });
-
-      const uploadTimeout = new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error("Upload timed out — please check your connection and retry.")),
-          4 * 60 * 1000
-        )
-      );
-
-      const blob = await Promise.race([uploadPromise, uploadTimeout]);
-
 
       const mime = targetFileToUpload.type || inferMimeType(targetFileToUpload.name, targetFileToUpload.type);
       const downloadUrl = `${protocol}${activeHost}/d?p=${encodeURIComponent(blob.pathname || "")}&f=${encodeURIComponent(targetFileToUpload.name)}`;

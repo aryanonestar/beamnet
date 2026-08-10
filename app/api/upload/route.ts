@@ -1,41 +1,36 @@
-import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
+import { put } from '@vercel/blob';
 import { NextResponse } from 'next/server';
 
-const uploadConfig = {
-  onBeforeGenerateToken: async () => ({
-    allowedContentTypes: ['*/*'],
-    maximumSizeInBytes: 500 * 1024 * 1024, // 500 MB
-    addRandomSuffix: true,
-    tokenPayload: JSON.stringify({ uploadedAt: new Date().toISOString() }),
-  }),
-  onUploadCompleted: async ({ blob }: { blob: { url: string } }) => {
-    console.log('[BEAM-NET] Upload completed:', blob.url);
-  },
-};
+export const runtime = 'nodejs';
+// No body size limit on route handlers — they stream via Node.js
+// (Only Server Actions have the 4.5MB default limit)
 
 export async function POST(request: Request): Promise<NextResponse> {
-  const body = (await request.json()) as HandleUploadBody;
-
-  // ── CRITICAL FIX: For completion events, respond INSTANTLY (fire-and-forget).
-  // The client SDK only needs a 2xx here — it never reads the response body.
-  // Without this, the SDK awaits a potentially cold-starting serverless function,
-  // causing the upload to hang silently at 94–99% forever.
-  if ((body as { type?: string }).type === 'blob.upload-completed') {
-    // Fire the completion handler in background so the log still happens
-    handleUpload({ body, request, ...uploadConfig }).catch(() => null);
-    // Return instantly — unblocks the client SDK immediately
-    return NextResponse.json({ ok: true });
-  }
-
-  // ── For token-generation events: wait normally so the client gets its token ──
   try {
-    const jsonResponse = await handleUpload({ body, request, ...uploadConfig });
-    return NextResponse.json(jsonResponse);
+    const contentType = request.headers.get('content-type') || 'application/octet-stream';
+    const fileName = request.headers.get('x-filename') || 'upload';
+    const token = process.env.BLOB_READ_WRITE_TOKEN;
+
+    if (!token) {
+      return NextResponse.json({ error: 'Storage not configured' }, { status: 500 });
+    }
+
+    // Stream the request body directly into Vercel Blob (server-side put)
+    // This avoids ALL client-SDK issues: no completion callbacks, no cold-start races,
+    // no JWT token extraction, no multipart orchestration on the client.
+    const blob = await put(fileName, request.body as ReadableStream, {
+      access: 'public',
+      token,
+      addRandomSuffix: true,
+      contentType,
+    });
+
+    return NextResponse.json({ url: blob.url, pathname: blob.pathname });
   } catch (error) {
-    console.error('[BEAM-NET] Blob upload token error:', error);
+    console.error('[BEAM-NET] Stream upload error:', error);
     return NextResponse.json(
       { error: (error as Error).message },
-      { status: 400 }
+      { status: 500 }
     );
   }
 }
