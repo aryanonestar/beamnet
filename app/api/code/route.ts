@@ -93,25 +93,25 @@ export async function POST(request: Request): Promise<NextResponse> {
     // Store in local lambda memory
     codeStore.set(code, entry);
 
-    // Persist to Vercel Blob asynchronously with 2.5s timeout guard so HTTP response never stalls
+    // Persist to Vercel Blob publicly so any remote mobile phone or device can read it
     const token = process.env.BLOB_READ_WRITE_TOKEN;
     if (token) {
       const blobPath = `codes/${code}.json`;
+      const passkeyPath = `passkeys/${code}.json`;
       const blobContent = JSON.stringify(entry);
 
-      const blobSavePromise = put(blobPath, blobContent, {
-        access: "private",
-        token,
-        addRandomSuffix: false,
-      }).catch(() => {
-        return put(blobPath, blobContent, {
+      const blobSavePromise = Promise.all([
+        put(blobPath, blobContent, {
           access: "public",
           token,
           addRandomSuffix: false,
-        }).catch((err2) => {
-          console.warn("Vercel Blob passkey persistence warning:", err2);
-        });
-      });
+        }).catch((e) => console.warn("Blob codes put warning:", e)),
+        put(passkeyPath, blobContent, {
+          access: "public",
+          token,
+          addRandomSuffix: false,
+        }).catch((e) => console.warn("Blob passkeys put warning:", e)),
+      ]);
 
       Promise.race([
         blobSavePromise,
@@ -149,51 +149,35 @@ export async function GET(request: Request): Promise<NextResponse> {
   // If not in local memory, check Vercel Blob persistent store
   const token = process.env.BLOB_READ_WRITE_TOKEN;
   if (!entry && token) {
-    const blobPath = `codes/${code}.json`;
-    try {
-      const blobResult = await get(blobPath, { access: "private", token }).catch(() => null);
-      if (blobResult && blobResult.stream) {
-        const text = await new Response(blobResult.stream as unknown as ReadableStream).text();
-        entry = JSON.parse(text) as CodeEntry;
-      }
-    } catch {
-      /* ignore SDK get error */
-    }
-
-    if (!entry) {
+    // 1. Check passkeys/${code}.json and codes/${code}.json
+    for (const prefix of [`passkeys/${code}`, `codes/${code}`]) {
       try {
-        const { blobs } = await list({
-          prefix: `codes/${code}`,
-          token,
-        });
-
-        if (blobs.length > 0) {
+        const { blobs } = await list({ prefix, token }).catch(() => ({ blobs: [] }));
+        if (blobs && blobs.length > 0) {
           const downloadUrl = blobs[0].downloadUrl || blobs[0].url;
-          const res = await fetch(downloadUrl, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-
+          const res = await fetch(downloadUrl);
           if (res.ok) {
             entry = (await res.json()) as CodeEntry;
+            break;
           }
         }
-      } catch (listErr) {
-        console.warn("Vercel Blob passkey list error:", listErr);
+      } catch {
+        /* ignore list error */
       }
-    }
-
-    if (entry && entry.expiresAt > Date.now()) {
-      codeStore.set(code, entry);
     }
   }
 
+  if (entry && entry.expiresAt > Date.now()) {
+    codeStore.set(code, entry);
+  }
+
   if (!entry) {
-    return NextResponse.json({ error: "Code not found or expired" }, { status: 404 });
+    return NextResponse.json({ error: "Passkey not found or expired" }, { status: 404 });
   }
 
   if (Date.now() > entry.expiresAt) {
     codeStore.delete(code);
-    return NextResponse.json({ error: "Code has expired" }, { status: 404 });
+    return NextResponse.json({ error: "Passkey has expired" }, { status: 404 });
   }
 
   const normalizedFiles = Array.isArray(entry.files) && entry.files.length > 0

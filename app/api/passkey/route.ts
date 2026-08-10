@@ -12,15 +12,17 @@ export async function GET(request: Request) {
   const token = process.env.BLOB_READ_WRITE_TOKEN;
 
   try {
-    // 1. Try public passkeys/${code}.json blob prefix search
+    // 1. Try public passkeys/${code} or codes/${code} blob prefix search
     if (token) {
-      const { blobs } = await list({ prefix: `passkeys/${code}`, token }).catch(() => ({ blobs: [] }));
-      if (blobs && blobs.length > 0) {
-        const metadataUrl = blobs[0].downloadUrl || blobs[0].url;
-        const res = await fetch(metadataUrl);
-        if (res.ok) {
-          const metadata = await res.json();
-          return NextResponse.json(metadata, { status: 200 });
+      for (const prefix of [`passkeys/${code}`, `codes/${code}`]) {
+        const { blobs } = await list({ prefix, token }).catch(() => ({ blobs: [] }));
+        if (blobs && blobs.length > 0) {
+          const metadataUrl = blobs[0].downloadUrl || blobs[0].url;
+          const res = await fetch(metadataUrl);
+          if (res.ok) {
+            const metadata = await res.json();
+            return NextResponse.json(metadata, { status: 200 });
+          }
         }
       }
     }
