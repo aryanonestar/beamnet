@@ -322,13 +322,6 @@ export default function Broadcaster() {
         /* storage fallback ignore */
       }
 
-      // Register passkey immediately with server /api/code so remote lookups work instantly
-      fetch("/api/code", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: instantPasskey, files: localRecord.files }),
-      }).catch(() => null);
-
       setUploadProgressMonotonic(25);
 
       // 2. Upload binary file to Vercel Blob via XHR (tracks real progress 25% -> 80%)
