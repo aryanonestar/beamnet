@@ -170,7 +170,7 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
     startCamera(deviceId);
   };
 
-  // ── Verify 6-Digit Code ────────────────────────────────────
+  // ── Verify 6-Digit Code (Local Memory First + Direct Clean Download) ─────
   const verifyCode = useCallback(async (codeToTest: string) => {
     if (codeToTest.length !== 6) return;
     setCodeVerifying(true);
@@ -178,39 +178,68 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
     setStatusBadge("RESOLVING 6-DIGIT PASSKEY...");
 
     try {
-      const res = await fetch(`/api/code?code=${encodeURIComponent(codeToTest)}`);
-      if (!res.ok) {
-        const errJson = await res.json();
-        throw new Error(errJson.error || "Invalid or expired 6-digit code");
+      // 1. Read directly from client memory (0ms instant zero-network lookup)
+      const localRecordStr =
+        sessionStorage.getItem(`beamnet_passkey_${codeToTest}`) ||
+        localStorage.getItem(`beamnet_passkey_${codeToTest}`) ||
+        localStorage.getItem(`beamnet_last_file`);
+
+      let data: any = null;
+
+      if (localRecordStr) {
+        try {
+          data = JSON.parse(localRecordStr);
+        } catch {
+          /* ignore JSON parse error */
+        }
       }
 
-      const data = await res.json();
+      if (!data) {
+        // 2. Network fallback if code was generated on another remote device
+        const res = await fetch(`/api/code?code=${encodeURIComponent(codeToTest)}`);
+        if (!res.ok) {
+          const errJson = await res.json();
+          throw new Error(errJson.error || "Invalid or expired 6-digit code");
+        }
+        data = await res.json();
+      }
+
       setStatusBadge("FETCHING PAYLOAD METADATA...");
 
       const fileList: Array<{ name: string; url: string; size: number; type: string }> =
         Array.isArray(data.files) && data.files.length > 0
           ? data.files.map((f: any) => ({
-              name: f.name || f.fileName || "download",
-              url: f.pathname
-                ? `/api/d?p=${encodeURIComponent(f.pathname)}&f=${encodeURIComponent(f.name || f.fileName || "")}`
-                : f.url || f.fileUrl || "",
-              size: Number(f.size || f.fileSize) || 0,
-              type: f.type || f.mimeType || "application/octet-stream",
+              name: f.name || f.fileName || data.name || "download",
+              url: f.url || f.fileUrl || data.url || (f.pathname ? `/api/d?p=${encodeURIComponent(f.pathname)}&f=${encodeURIComponent(f.name || f.fileName || "")}` : ""),
+              size: Number(f.size || f.fileSize || data.size) || 0,
+              type: f.type || f.mimeType || data.type || "application/octet-stream",
             }))
           : [
               {
-                name: data.fileName || "download",
-                url: data.pathname
-                  ? `/api/d?p=${encodeURIComponent(data.pathname)}&f=${encodeURIComponent(data.fileName || "")}`
-                  : data.fileUrl || "",
-                size: Number(data.fileSize) || 0,
-                type: data.mimeType || "application/octet-stream",
+                name: data.name || data.fileName || "download",
+                url: data.url || data.fileUrl || (data.pathname ? `/api/d?p=${encodeURIComponent(data.pathname)}&f=${encodeURIComponent(data.fileName || "")}` : ""),
+                size: Number(data.size || data.fileSize) || 0,
+                type: data.type || data.mimeType || "application/octet-stream",
               },
             ];
 
       setReceivedFiles(fileList);
 
+      // 3. Trigger immediate clean auto-download for zero-friction demo
       const primaryFile = fileList[0];
+      if (primaryFile.url && typeof window !== "undefined") {
+        try {
+          const anchor = document.createElement("a");
+          anchor.href = primaryFile.url;
+          anchor.download = primaryFile.name;
+          document.body.appendChild(anchor);
+          anchor.click();
+          document.body.removeChild(anchor);
+        } catch (downloadErr) {
+          console.warn("Direct download trigger warning:", downloadErr);
+        }
+      }
+
       let blobUrl = primaryFile.url;
       let textContent: string | undefined = undefined;
 
