@@ -170,9 +170,9 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
     startCamera(deviceId);
   };
 
-  // ── Verify 6-Digit Code (Cross-Device Vercel Blob Lookup + Local Fallback) ─────
-  const verifyCode = useCallback(async (codeToTest: string, directMetaUrl?: string) => {
-    if (codeToTest.length !== 6) return;
+  // ── Verify 6-Digit Code or Direct URL Landing Page ─────
+  const verifyCode = useCallback(async (codeToTest: string, directMetaUrl?: string, directFileUrl?: string, directFileName?: string) => {
+    if (codeToTest.length !== 6 && !directFileUrl) return;
     setCodeVerifying(true);
     setCodeError("");
     setStatusBadge("RESOLVING 6-DIGIT PASSKEY...");
@@ -180,8 +180,20 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
     try {
       let data: any = null;
 
+      // 0. Direct File URL passed in URL parameters (Instant 0ms Landing Page!)
+      if (directFileUrl) {
+        data = {
+          code: codeToTest,
+          url: directFileUrl,
+          fileUrl: directFileUrl,
+          name: directFileName || "download",
+          fileName: directFileName || "download",
+          files: [{ name: directFileName || "download", url: directFileUrl, size: 0, type: "application/octet-stream" }],
+        };
+      }
+
       // 1. If direct meta URL passed from QR parameter (?meta=...)
-      if (directMetaUrl) {
+      if (!data && directMetaUrl) {
         try {
           const metaRes = await fetch(directMetaUrl);
           if (metaRes.ok) {
@@ -314,10 +326,14 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
       const params = new URLSearchParams(window.location.search);
       const codeParam = params.get("code");
       const metaParam = params.get("meta");
-      if (codeParam && codeParam.length === 6) {
-        const digits = codeParam.split("");
-        setCodeDigits(digits);
-        verifyCode(codeParam, metaParam || undefined);
+      const urlParam = params.get("url") || params.get("fileUrl");
+      const nameParam = params.get("name") || params.get("fileName");
+      if ((codeParam && codeParam.length === 6) || urlParam) {
+        if (codeParam && codeParam.length === 6) {
+          const digits = codeParam.split("");
+          setCodeDigits(digits);
+        }
+        verifyCode(codeParam || "000000", metaParam || undefined, urlParam || undefined, nameParam || undefined);
       }
     }
   }, [verifyCode]);

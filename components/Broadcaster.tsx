@@ -436,8 +436,11 @@ export default function Broadcaster() {
 
       setUploadProgressMonotonic(95);
 
-      // 6. Build final Receiver Share URL & render QR Code
+      // 6. Build final Receiver Share URL & render QR Code (Includes direct URL parameters for instant landing!)
       let shareTargetUrl = `${protocol}${activeHost}/scan?code=${instantPasskey}`;
+      if (finalFileUrl && finalFileUrl.startsWith("http")) {
+        shareTargetUrl += `&url=${encodeURIComponent(finalFileUrl)}&name=${encodeURIComponent(targetFileToUpload.name)}`;
+      }
       if (publicMetaUrl) {
         shareTargetUrl += `&meta=${encodeURIComponent(publicMetaUrl)}`;
       }
