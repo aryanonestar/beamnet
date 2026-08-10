@@ -323,17 +323,48 @@ export default function Broadcaster() {
 
       setUploadProgressMonotonic(25);
 
-      // 2. Direct browser-to-storage upload via @vercel/blob/client
-      // Bypasses Next.js serverless body limits (fixes HTTP 413 Payload Too Large forever!)
-      const blobResult = await vercelClientUpload(targetFileToUpload.name, targetFileToUpload, {
-        access: "public",
-        handleUploadUrl: "/api/upload",
-        onUploadProgress: (p) => {
-          setUploadProgressMonotonic(25 + Math.floor((p.percentage / 100) * 55));
-        },
+      // 2. Upload binary stream to /api/upload (saves to disk cache & Vercel Blob)
+      // Generates a universal HTTP download URL (/api/d?p=...) accessible by ANY device!
+      const blobResult = await new Promise<{ url: string; pathname: string }>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "/api/upload", true);
+        xhr.setRequestHeader("x-filename", targetFileToUpload.name);
+        xhr.setRequestHeader("Content-Type", mime);
+        xhr.timeout = 180000;
+
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            const pct = 25 + Math.floor((e.loaded / e.total) * 55);
+            setUploadProgressMonotonic(pct);
+          }
+        };
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              const data = JSON.parse(xhr.responseText);
+              if (data.url) {
+                resolve({ url: data.url, pathname: data.pathname || "" });
+              } else {
+                reject(new Error("No URL returned from upload route"));
+              }
+            } catch {
+              reject(new Error("Failed to parse upload response"));
+            }
+          } else {
+            reject(new Error(`Upload failed with HTTP ${xhr.status}`));
+          }
+        };
+
+        xhr.onerror = () => reject(new Error("Network error during file upload"));
+        xhr.ontimeout = () => reject(new Error("Upload timed out"));
+        xhr.send(targetFileToUpload);
       }).catch((uploadErr) => {
-        console.warn("[BEAM-NET] Direct storage upload warning:", uploadErr);
-        return { url: localBlobUrl, pathname: "" };
+        console.warn("[BEAM-NET] Server upload warning, using HTTP route fallback:", uploadErr);
+        return {
+          url: `/api/d?p=${encodeURIComponent(targetFileToUpload.name)}&f=${encodeURIComponent(targetFileToUpload.name)}`,
+          pathname: targetFileToUpload.name,
+        };
       });
 
 
