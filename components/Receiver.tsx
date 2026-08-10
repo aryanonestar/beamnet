@@ -170,36 +170,62 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
     startCamera(deviceId);
   };
 
-  // ── Verify 6-Digit Code (Local Memory First + Direct Clean Download) ─────
-  const verifyCode = useCallback(async (codeToTest: string) => {
+  // ── Verify 6-Digit Code (Cross-Device Vercel Blob Lookup + Local Fallback) ─────
+  const verifyCode = useCallback(async (codeToTest: string, directMetaUrl?: string) => {
     if (codeToTest.length !== 6) return;
     setCodeVerifying(true);
     setCodeError("");
     setStatusBadge("RESOLVING 6-DIGIT PASSKEY...");
 
     try {
-      // 1. Read directly from client memory (0ms instant zero-network lookup)
-      const localRecordStr =
-        sessionStorage.getItem(`beamnet_passkey_${codeToTest}`) ||
-        localStorage.getItem(`beamnet_passkey_${codeToTest}`) ||
-        localStorage.getItem(`beamnet_last_file`);
-
       let data: any = null;
 
-      if (localRecordStr) {
+      // 1. If direct meta URL passed from QR parameter (?meta=...)
+      if (directMetaUrl) {
         try {
-          data = JSON.parse(localRecordStr);
-        } catch {
-          /* ignore JSON parse error */
+          const metaRes = await fetch(directMetaUrl);
+          if (metaRes.ok) {
+            data = await metaRes.json();
+          }
+        } catch (metaErr) {
+          console.warn("Meta URL fetch warning:", metaErr);
         }
       }
 
+      // 2. Read directly from client memory (same device zero-network lookup)
       if (!data) {
-        // 2. Network fallback if code was generated on another remote device
+        const localRecordStr =
+          sessionStorage.getItem(`beamnet_passkey_${codeToTest}`) ||
+          localStorage.getItem(`beamnet_passkey_${codeToTest}`) ||
+          localStorage.getItem(`beamnet_last_file`);
+
+        if (localRecordStr) {
+          try {
+            data = JSON.parse(localRecordStr);
+          } catch {
+            /* ignore JSON parse error */
+          }
+        }
+      }
+
+      // 3. Try /api/passkey endpoint (Vercel Blob metadata JSON search)
+      if (!data) {
+        try {
+          const passkeyRes = await fetch(`/api/passkey?code=${encodeURIComponent(codeToTest)}`);
+          if (passkeyRes.ok) {
+            data = await passkeyRes.json();
+          }
+        } catch {
+          /* try /api/code next */
+        }
+      }
+
+      // 4. Try /api/code endpoint
+      if (!data) {
         const res = await fetch(`/api/code?code=${encodeURIComponent(codeToTest)}`);
         if (!res.ok) {
           const errJson = await res.json();
-          throw new Error(errJson.error || "Invalid or expired 6-digit code");
+          throw new Error(errJson.error || "Passkey not found or expired");
         }
         data = await res.json();
       }
@@ -209,23 +235,23 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
       const fileList: Array<{ name: string; url: string; size: number; type: string }> =
         Array.isArray(data.files) && data.files.length > 0
           ? data.files.map((f: any) => ({
-              name: f.name || f.fileName || data.name || "download",
-              url: f.url || f.fileUrl || data.url || (f.pathname ? `/api/d?p=${encodeURIComponent(f.pathname)}&f=${encodeURIComponent(f.name || f.fileName || "")}` : ""),
-              size: Number(f.size || f.fileSize || data.size) || 0,
-              type: f.type || f.mimeType || data.type || "application/octet-stream",
+              name: f.name || f.fileName || data.fileName || data.name || "download",
+              url: f.url || f.fileUrl || data.fileUrl || data.url || (f.pathname ? `/api/d?p=${encodeURIComponent(f.pathname)}&f=${encodeURIComponent(f.name || f.fileName || "")}` : ""),
+              size: Number(f.size || f.fileSize || data.fileSize || data.size) || 0,
+              type: f.type || f.mimeType || data.mimeType || data.type || "application/octet-stream",
             }))
           : [
               {
-                name: data.name || data.fileName || "download",
-                url: data.url || data.fileUrl || (data.pathname ? `/api/d?p=${encodeURIComponent(data.pathname)}&f=${encodeURIComponent(data.fileName || "")}` : ""),
-                size: Number(data.size || data.fileSize) || 0,
-                type: data.type || data.mimeType || "application/octet-stream",
+                name: data.fileName || data.name || "download",
+                url: data.fileUrl || data.url || (data.pathname ? `/api/d?p=${encodeURIComponent(data.pathname)}&f=${encodeURIComponent(data.fileName || "")}` : ""),
+                size: Number(data.fileSize || data.size) || 0,
+                type: data.mimeType || data.type || "application/octet-stream",
               },
             ];
 
       setReceivedFiles(fileList);
 
-      // 3. Trigger immediate clean auto-download for zero-friction demo
+      // 5. Trigger immediate clean auto-download
       const primaryFile = fileList[0];
       if (primaryFile.url && typeof window !== "undefined") {
         try {
@@ -244,7 +270,6 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
       let textContent: string | undefined = undefined;
 
       // Only fetch into RAM for small text-previewable files (< 2MB).
-      // For large/binary files, use the direct URL to avoid tab freeze.
       const PREVIEW_SIZE_LIMIT = 2 * 1024 * 1024; // 2 MB
       if (primaryFile.url && primaryFile.size < PREVIEW_SIZE_LIMIT && isTextPreviewable(primaryFile.type)) {
         try {
@@ -285,10 +310,11 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const codeParam = params.get("code");
+      const metaParam = params.get("meta");
       if (codeParam && codeParam.length === 6) {
         const digits = codeParam.split("");
         setCodeDigits(digits);
-        verifyCode(codeParam);
+        verifyCode(codeParam, metaParam || undefined);
       }
     }
   }, [verifyCode]);

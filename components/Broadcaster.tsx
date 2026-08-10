@@ -240,12 +240,12 @@ export default function Broadcaster() {
     }
   }, [generateQrDataUrl, selectedFiles]);
 
-  // ── Instant 0ms Zero-Network Cloud Upload & Passkey Generator ──────
+  // ── Instant 0ms Local Memory + Cross-Device Vercel Blob Sync ──────
   const startCloudUpload = useCallback(async (selected: File) => {
     setTransferMode("cloud");
     setPreparing(true);
     setFallbackNotice("");
-    setUploadProgress(100); // Jump straight to 100% instantly!
+    setUploadProgress(10);
     setPasskey("");
     setCloudUrl("");
     setQrDataUrl("");
@@ -299,6 +299,10 @@ export default function Broadcaster() {
         size: targetFileToUpload.size,
         type: mime,
         url: localBlobUrl,
+        fileUrl: localBlobUrl,
+        fileName: targetFileToUpload.name,
+        fileSize: targetFileToUpload.size,
+        mimeType: mime,
         files: [
           {
             name: targetFileToUpload.name,
@@ -310,7 +314,7 @@ export default function Broadcaster() {
         expiresAt: Date.now() + 15 * 60 * 1000,
       };
 
-      // 2. Save into browser session and local storage for instant zero-network Collector retrieval
+      // 2. Save into browser session and local storage for instant zero-network same-device Collector retrieval
       try {
         sessionStorage.setItem(`beamnet_passkey_${instantPasskey}`, JSON.stringify(localRecord));
         localStorage.setItem(`beamnet_passkey_${instantPasskey}`, JSON.stringify(localRecord));
@@ -321,49 +325,109 @@ export default function Broadcaster() {
 
       // 3. Set UI state IMMEDIATELY (0ms delay)
       setPasskey(instantPasskey);
-      const batchShareUrl = `${protocol}${activeHost}/scan?code=${instantPasskey}`;
-      setCloudUrl(batchShareUrl);
-      await generateQrDataUrl(batchShareUrl);
-      setUploadProgressMonotonic(100);
-      setPreparing(false);
+      const initialShareUrl = `${protocol}${activeHost}/scan?code=${instantPasskey}`;
+      setCloudUrl(initialShareUrl);
+      await generateQrDataUrl(initialShareUrl);
+      setUploadProgressMonotonic(50);
 
-      // 4. Asynchronous non-blocking background server sync (optional fallback)
-      (async () => {
-        try {
-          const xhr = new XMLHttpRequest();
-          xhr.open("POST", "/api/upload", true);
-          xhr.setRequestHeader("x-filename", targetFileToUpload.name);
-          xhr.setRequestHeader("Content-Type", mime);
-          xhr.timeout = 30000;
-          xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) {
-              try {
-                const data = JSON.parse(xhr.responseText);
-                if (data.url) {
-                  const remoteRecord = { ...localRecord, url: data.url, files: [{ ...localRecord.files[0], url: data.url }] };
-                  sessionStorage.setItem(`beamnet_passkey_${instantPasskey}`, JSON.stringify(remoteRecord));
-                  localStorage.setItem(`beamnet_passkey_${instantPasskey}`, JSON.stringify(remoteRecord));
-                  fetch("/api/code", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ code: instantPasskey, files: remoteRecord.files }),
-                  }).catch(() => null);
-                }
-              } catch {
-                /* ignore json parse */
-              }
-            }
-          };
-          xhr.send(targetFileToUpload);
-        } catch {
-          /* background server upload ignore */
+      // 4. Background Upload & Cross-Device Passkey Metadata Publishing to Vercel Blob
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/upload", true);
+      xhr.setRequestHeader("x-filename", targetFileToUpload.name);
+      xhr.setRequestHeader("Content-Type", mime);
+      xhr.timeout = 180000;
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const pct = 50 + Math.floor((e.loaded / e.total) * 45);
+          setUploadProgressMonotonic(pct);
         }
-      })();
+      };
+
+      xhr.onload = async () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const data = JSON.parse(xhr.responseText);
+            if (data.url) {
+              const remoteRecord = {
+                code: instantPasskey,
+                name: targetFileToUpload.name,
+                fileName: targetFileToUpload.name,
+                fileSize: targetFileToUpload.size,
+                mimeType: mime,
+                size: targetFileToUpload.size,
+                type: mime,
+                url: data.url,
+                fileUrl: data.url,
+                pathname: data.pathname,
+                files: [
+                  {
+                    name: targetFileToUpload.name,
+                    url: data.url,
+                    size: targetFileToUpload.size,
+                    type: mime,
+                    pathname: data.pathname,
+                  },
+                ],
+                expiresAt: Date.now() + 15 * 60 * 1000,
+              };
+
+              sessionStorage.setItem(`beamnet_passkey_${instantPasskey}`, JSON.stringify(remoteRecord));
+              localStorage.setItem(`beamnet_passkey_${instantPasskey}`, JSON.stringify(remoteRecord));
+
+              // Register code with /api/code for cross-device lookup
+              await fetch("/api/code", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ code: instantPasskey, files: remoteRecord.files }),
+              }).catch(() => null);
+
+              // Also publish 1KB metadata JSON file to Vercel Blob passkeys/
+              const metaPayload = JSON.stringify(remoteRecord);
+              const metaXhr = new XMLHttpRequest();
+              metaXhr.open("POST", "/api/upload", true);
+              metaXhr.setRequestHeader("x-filename", `passkeys/${instantPasskey}.json`);
+              metaXhr.setRequestHeader("Content-Type", "application/json");
+              metaXhr.onload = async () => {
+                if (metaXhr.status >= 200 && metaXhr.status < 300) {
+                  try {
+                    const metaData = JSON.parse(metaXhr.responseText);
+                    if (metaData.url) {
+                      const finalShareUrl = `${protocol}${activeHost}/scan?code=${instantPasskey}&meta=${encodeURIComponent(metaData.url)}`;
+                      setCloudUrl(finalShareUrl);
+                      await generateQrDataUrl(finalShareUrl);
+                    }
+                  } catch {
+                    /* ignore json parse */
+                  }
+                }
+              };
+              metaXhr.send(metaPayload);
+            }
+          } catch (e) {
+            console.warn("Parse warning:", e);
+          }
+        }
+        setUploadProgressMonotonic(100);
+        setPreparing(false);
+      };
+
+      xhr.onerror = () => {
+        setUploadProgressMonotonic(100);
+        setPreparing(false);
+      };
+
+      xhr.ontimeout = () => {
+        setUploadProgressMonotonic(100);
+        setPreparing(false);
+      };
+
+      xhr.send(targetFileToUpload);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Upload failed";
-      console.error("Instant upload failed:", msg);
+      console.error("Upload process warning:", msg);
       setIsZipping(false);
-      setFallbackNotice(`Notice: ${msg}`);
+      setUploadProgressMonotonic(100);
       setPreparing(false);
     }
   }, [customHost, generateQrDataUrl, selectedFiles]);
