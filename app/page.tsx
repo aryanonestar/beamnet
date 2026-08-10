@@ -10,7 +10,7 @@ export default function Home() {
           BEAM-NET
         </h1>
         <p className="mt-4 text-[#869397] font-mono text-sm leading-relaxed">
-          Ultra-secure file transfer using <span className="text-[#4edea3] font-semibold">Air-Gapped Optical QR Streams</span> and <span className="text-[#4cd7f6] font-semibold">Private Encrypted Storage</span>.
+          Ultra-secure file transfer using <span className="text-[#4edea3] font-semibold">Air-Gapped Optical QR Streams</span> and <span className="text-[#4cd7f6] font-semibold">Private Vercel Cloud Storage</span>.
         </p>
       </div>
 
@@ -24,7 +24,7 @@ export default function Home() {
             <span className="text-4xl">📤</span>
             <h2 className="text-xl font-bold text-[#4cd7f6] font-mono uppercase tracking-wider">Broadcaster</h2>
             <p className="text-[#869397] text-xs font-mono">
-              Upload, compress, and stream payloads as sequential QR streams or instant encrypted links.
+              Upload, compress, and stream payloads as sequential QR streams or instant Vercel Blob URLs.
             </p>
             <span className="mt-2 inline-block px-4 py-1.5 bg-[#4cd7f6]/10 text-[#4cd7f6] text-xs font-mono uppercase tracking-widest border border-[#4cd7f6]/40">
               Open Sender →
@@ -53,8 +53,8 @@ export default function Home() {
       <div className="w-full max-w-lg bg-[#0e0e10] border border-[#3d494c] rounded-none p-6 font-mono">
         <h3 className="text-[#bcc9cd] font-semibold mb-3 text-xs uppercase tracking-widest">Protocol Matrix</h3>
         <ol className="text-[#869397] text-xs space-y-2 list-decimal list-inside">
-          <li>Files ≤ 100 KB present a protocol choice (Optical Stream vs Private Encrypted Cloud).</li>
-          <li>Files &gt; 100 KB auto-upload to Private Encrypted Cloud.</li>
+          <li>Files ≤ 100 KB present a protocol choice (Optical Stream vs Vercel Cloud Blob).</li>
+          <li>Files &gt; 100 KB auto-upload to Private Vercel Blob store (`store_Uuhi1JVtHqWZuScC`).</li>
           <li>Generates a zero-click auto-download QR code + 15-minute 6-digit transfer passkey.</li>
           <li>Receiver scans QR or types passkey to download payload instantly onto target PC.</li>
         </ol>

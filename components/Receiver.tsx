@@ -2,14 +2,7 @@
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import jsQR from "jsqr";
-import {
-  reassembleAndUnpack,
-  parsePipePacket,
-  reassemblePipePackets,
-  type Chunk,
-  type ReassemblyResult,
-  isTextPreviewable,
-} from "@/lib/chunker";
+import { reassembleAndUnpack, type Chunk, type ReassemblyResult, isTextPreviewable } from "@/lib/chunker";
 import { cn } from "@/utils/cn";
 import CompletionModal from "@/components/CompletionModal";
 import Link from "next/link";
@@ -52,34 +45,11 @@ export default function Receiver() {
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [cameraError, setCameraError] = useState("");
 
-const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized cadence
-
   const [receivedIndexes, setReceivedIndexes] = useState<Set<number>>(new Set());
   const [totalChunks, setTotalChunks] = useState<number | null>(null);
-  const [receivedCount, setReceivedCount] = useState<number>(0);
-  const [totalCount, setTotalCount] = useState<number>(0);
-  const [totalSnapshotsTaken, setTotalSnapshotsTaken] = useState<number>(0);
-  const receivedPipeMapRef = useRef<Map<number, string>>(new Map());
   const [scanFps, setScanFps] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
   const [statusBadge, setStatusBadge] = useState<string>("AWAITING OPTICAL STREAM");
-
-  const [receivedFiles, setReceivedFiles] = useState<Array<{ name: string; url: string; size: number; type: string }>>([]);
-
-  const handleDownloadAll = (fileList: Array<{ url: string; name: string }>) => {
-    fileList.forEach((file, index) => {
-      setTimeout(() => {
-        const link = document.createElement("a");
-        link.href = file.url;
-        link.download = file.name.replace(/\.enc$/, "");
-        link.target = "_blank";
-        link.rel = "noopener noreferrer";
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      }, index * 350);
-    });
-  };
 
   // Completion modal state
   const [showModal, setShowModal] = useState(false);
@@ -170,141 +140,50 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
     startCamera(deviceId);
   };
 
-  // ── Verify 6-Digit Code or Direct URL Landing Page ─────
-  const verifyCode = useCallback(async (codeToTest: string, directMetaUrl?: string, directFileUrl?: string, directFileName?: string) => {
-    if (codeToTest.length !== 6 && !directFileUrl) return;
+  // ── Verify 6-Digit Code ────────────────────────────────────
+  const verifyCode = useCallback(async (codeToTest: string) => {
+    if (codeToTest.length !== 6) return;
     setCodeVerifying(true);
     setCodeError("");
     setStatusBadge("RESOLVING 6-DIGIT PASSKEY...");
 
     try {
-      let data: any = null;
-
-      // 0. Direct File URL passed in URL parameters (Instant 0ms Landing Page!)
-      if (directFileUrl) {
-        data = {
-          code: codeToTest,
-          url: directFileUrl,
-          fileUrl: directFileUrl,
-          name: directFileName || "download",
-          fileName: directFileName || "download",
-          files: [{ name: directFileName || "download", url: directFileUrl, size: 0, type: "application/octet-stream" }],
-        };
+      const res = await fetch(`/api/code?code=${encodeURIComponent(codeToTest)}`);
+      if (!res.ok) {
+        const errJson = await res.json();
+        throw new Error(errJson.error || "Invalid or expired 6-digit code");
       }
 
-      // 1. If direct meta URL passed from QR parameter (?meta=...)
-      if (!data && directMetaUrl) {
-        try {
-          const metaRes = await fetch(directMetaUrl);
-          if (metaRes.ok) {
-            data = await metaRes.json();
-          }
-        } catch (metaErr) {
-          console.warn("Meta URL fetch warning:", metaErr);
-        }
-      }
-
-      // 2. Read directly from client memory if exact code match exists
-      if (!data) {
-        const localRecordStr =
-          sessionStorage.getItem(`beamnet_passkey_${codeToTest}`) ||
-          localStorage.getItem(`beamnet_passkey_${codeToTest}`);
-
-        if (localRecordStr) {
-          try {
-            const parsed = JSON.parse(localRecordStr);
-            if (parsed && (parsed.code === codeToTest || !parsed.code)) {
-              data = parsed;
-            }
-          } catch {
-            /* ignore JSON parse error */
-          }
-        }
-      }
-
-      // 3. Try /api/passkey endpoint (Vercel Blob metadata JSON search)
-      if (!data) {
-        try {
-          const passkeyRes = await fetch(`/api/passkey?code=${encodeURIComponent(codeToTest)}`);
-          if (passkeyRes.ok) {
-            data = await passkeyRes.json();
-          }
-        } catch {
-          /* try /api/code next */
-        }
-      }
-
-      // 4. Try /api/code endpoint
-      if (!data) {
-        const res = await fetch(`/api/code?code=${encodeURIComponent(codeToTest)}`);
-        if (res.ok) {
-          data = await res.json();
-        } else {
-          const errJson = await res.json().catch(() => ({}));
-          throw new Error(errJson.error || "Passkey not found or expired");
-        }
-      }
-
+      const data = await res.json();
       setStatusBadge("FETCHING PAYLOAD METADATA...");
 
-      const fileList: Array<{ name: string; url: string; size: number; type: string }> =
-        Array.isArray(data.files) && data.files.length > 0
-          ? data.files.map((f: any) => ({
-              name: f.name || f.fileName || data.fileName || data.name || "download",
-              url: f.url || f.fileUrl || data.fileUrl || data.url || (f.pathname ? `/api/d?p=${encodeURIComponent(f.pathname)}&f=${encodeURIComponent(f.name || f.fileName || "")}` : ""),
-              size: Number(f.size || f.fileSize || data.fileSize || data.size) || 0,
-              type: f.type || f.mimeType || data.mimeType || data.type || "application/octet-stream",
-            }))
-          : [
-              {
-                name: data.fileName || data.name || "download",
-                url: data.fileUrl || data.url || (data.pathname ? `/api/d?p=${encodeURIComponent(data.pathname)}&f=${encodeURIComponent(data.fileName || "")}` : ""),
-                size: Number(data.fileSize || data.size) || 0,
-                type: data.mimeType || data.type || "application/octet-stream",
-              },
-            ];
+      // Construct file blob or serve stream
+      const fileUrl = data.pathname
+        ? `/api/d?p=${encodeURIComponent(data.pathname)}&f=${encodeURIComponent(data.fileName)}`
+        : data.fileUrl;
 
-      setReceivedFiles(fileList);
-
-      // 5. Trigger immediate clean auto-download
-      const primaryFile = fileList[0];
-      if (primaryFile.url && typeof window !== "undefined") {
-        try {
-          const anchor = document.createElement("a");
-          anchor.href = primaryFile.url;
-          anchor.download = primaryFile.name;
-          document.body.appendChild(anchor);
-          anchor.click();
-          document.body.removeChild(anchor);
-        } catch (downloadErr) {
-          console.warn("Direct download trigger warning:", downloadErr);
-        }
+      if (!fileUrl) {
+        throw new Error("No file download URL attached to this 6-digit passkey");
       }
 
-      let blobUrl = primaryFile.url;
-      let textContent: string | undefined = undefined;
+      // Fetch file arrayBuffer for syntax/preview
+      const blobRes = await fetch(fileUrl);
+      const blobData = await blobRes.arrayBuffer();
+      const mime = data.mimeType || "application/octet-stream";
 
-      // Only fetch into RAM for small text-previewable files (< 2MB).
-      const PREVIEW_SIZE_LIMIT = 2 * 1024 * 1024; // 2 MB
-      if (primaryFile.url && primaryFile.size < PREVIEW_SIZE_LIMIT && isTextPreviewable(primaryFile.type)) {
-        try {
-          const blobRes = await fetch(primaryFile.url);
-          if (blobRes.ok) {
-            const blobData = await blobRes.arrayBuffer();
-            const fileBlob = new Blob([blobData], { type: primaryFile.type });
-            blobUrl = URL.createObjectURL(fileBlob);
-            textContent = new TextDecoder().decode(blobData);
-          }
-        } catch {
-          /* fallback to direct URL */
-        }
+      const fileBlob = new Blob([blobData], { type: mime });
+      const blobUrl = URL.createObjectURL(fileBlob);
+
+      let textContent: string | undefined = undefined;
+      if (isTextPreviewable(mime)) {
+        textContent = new TextDecoder().decode(blobData);
       }
 
       const assembledResult: ReassemblyResult = {
         blobUrl,
-        fileName: primaryFile.name,
-        fileSize: primaryFile.size,
-        mimeType: primaryFile.type,
+        fileName: data.fileName,
+        fileSize: data.fileSize || blobData.byteLength,
+        mimeType: mime,
         textContent,
         crc32Valid: true,
       };
@@ -320,23 +199,6 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
       setCodeVerifying(false);
     }
   }, []);
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      const codeParam = params.get("code");
-      const metaParam = params.get("meta");
-      const urlParam = params.get("url") || params.get("fileUrl");
-      const nameParam = params.get("name") || params.get("fileName");
-      if ((codeParam && codeParam.length === 6) || urlParam) {
-        if (codeParam && codeParam.length === 6) {
-          const digits = codeParam.split("");
-          setCodeDigits(digits);
-        }
-        verifyCode(codeParam || "000000", metaParam || undefined, urlParam || undefined, nameParam || undefined);
-      }
-    }
-  }, [verifyCode]);
 
   // Handle Digit Typing
   const handleDigitChange = (index: number, value: string) => {
@@ -409,11 +271,10 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
       const vw = video.videoWidth;
       const vh = video.videoHeight;
 
-      // ─── STEP 3: High-Frequency 100ms Camera Sampling Throttle (3x faster than 300ms display)
+      // ─── STEP 3: Throttle jsQR decoding to 15 FPS (66ms) — pure time check, no state
       const now = performance.now();
-      if (now - lastScanTimeRef.current < 100) return;
+      if (now - lastScanTimeRef.current < 66) return;
       lastScanTimeRef.current = now;
-      setTotalSnapshotsTaken((prev) => prev + 1);
 
       try {
         // CRITICAL FIX: Crop a centered square from video feed (minDim x minDim)
@@ -450,9 +311,11 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
         if (overlayCanvas && code.location) {
           const olvCtx = overlayCanvas.getContext("2d");
           if (olvCtx) {
+            // Match overlay canvas size to video element display size
             overlayCanvas.width = overlayCanvas.offsetWidth || 640;
             overlayCanvas.height = overlayCanvas.offsetHeight || 480;
             olvCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+            // Scale detection corner points from 640x640 decode space to overlay display space
             const scaleX = overlayCanvas.width / DECODE_WIDTH;
             const scaleY = overlayCanvas.height / DECODE_HEIGHT;
             const pts = [
@@ -470,6 +333,7 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
             olvCtx.shadowColor = "#4edea3";
             olvCtx.shadowBlur = 12;
             olvCtx.stroke();
+            // Auto-clear the outline after 400ms
             if (detectionFlashRef.current) clearTimeout(detectionFlashRef.current);
             detectionFlashRef.current = setTimeout(() => {
               olvCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
@@ -478,10 +342,12 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
         }
 
         // ─── STEP 6b: Route by payload type
+        // Cloud URL QR — show download modal instead of redirecting
         if (code.data.startsWith("http://") || code.data.startsWith("https://")) {
           completedRef.current = true;
           isScanningRef.current = false;
           setStatusBadge("CLOUD FILE DETECTED");
+          // Build a pseudo ReassemblyResult so the CompletionModal can render a download button
           setResult({
             blobUrl: code.data,
             fileName: code.data.split("/").pop()?.split("?")[0] || "download",
@@ -493,59 +359,7 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
           return;
         }
 
-        // Route B: Session-Guarded Pipe Protocol QR (BEAM|sessionId|fileName|fileType|totalChunks|chunkIndex|payload)
-        const pipePacket = parsePipePacket(code.data);
-        if (pipePacket) {
-          const { sessionId, fileName, fileType, totalChunks, chunkIndex, payload } = pipePacket;
-          const sessionKey = sessionId || fileName;
-
-          // Reset buffer if a new transmission session starts
-          if (transmissionIdRef.current !== sessionKey) {
-            transmissionIdRef.current = sessionKey;
-            totalChunksRef.current = totalChunks;
-            receivedPipeMapRef.current.clear();
-            setReceivedCount(0);
-            setTotalCount(totalChunks);
-            setStatusBadge(`TRANSMISSION DETECTED - CAPTURING CHUNKS... (${totalChunks} TOTAL)`);
-          }
-
-          if (!receivedPipeMapRef.current.has(chunkIndex)) {
-            receivedPipeMapRef.current.set(chunkIndex, payload);
-            const count = receivedPipeMapRef.current.size;
-            setReceivedCount(count);
-            setTotalCount(totalChunks);
-
-            if (count === totalChunks && !completedRef.current) {
-              completedRef.current = true;
-              setStatusBadge("TRANSMISSION COMPLETE! COMPILING FILE...");
-              reassemblePipePackets(receivedPipeMapRef.current, totalChunks, fileName, fileType)
-                .then((res) => {
-                  setResult(res);
-                  setShowModal(true);
-                  setStatusBadge("FILE COMPILED & VERIFIED SUCCESSFULLY!");
-
-                  // Auto-download trigger
-                  try {
-                    const a = document.createElement("a");
-                    a.href = res.blobUrl;
-                    a.download = res.fileName;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                  } catch {
-                    /* fallback to modal trigger */
-                  }
-                })
-                .catch((err) => {
-                  setErrorMsg(err instanceof Error ? err.message : "Reassembly failed");
-                  setStatusBadge("OPTICAL REASSEMBLY ERROR");
-                });
-            }
-          }
-          return;
-        }
-
-        // Route C: Optical chunk JSON fallback
+        // Optical chunk JSON
         try {
           const raw = JSON.parse(code.data);
           const chunkMeta = raw.meta || raw;
@@ -568,8 +382,6 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
           if (!chunksMapRef.current.has(chunkIdx)) {
             chunksMapRef.current.set(chunkIdx, chunkObj);
             receivedIndexesRef.current.add(chunkIdx);
-            setReceivedCount(chunksMapRef.current.size);
-            setTotalCount(total);
 
             if (chunksMapRef.current.size === total && !completedRef.current) {
               completedRef.current = true;
@@ -604,10 +416,9 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
   }, [activeTab, permissionGranted]);
 
   // Exact Progress Math
-  const activeReceivedCount = receivedCount || receivedIndexes.size;
-  const activeTotalChunks = totalCount || totalChunks;
-  const progressPct = activeTotalChunks ? Math.min(100, Math.floor((activeReceivedCount / activeTotalChunks) * 100)) : 0;
-  const remainingChunks = activeTotalChunks ? Math.max(0, activeTotalChunks - activeReceivedCount) : 0;
+  const receivedCount = receivedIndexes.size;
+  const progressPct = totalChunks ? Math.min(100, Math.floor((receivedCount / totalChunks) * 100)) : 0;
+  const remainingChunks = totalChunks ? Math.max(0, totalChunks - receivedCount) : 0;
   const estSecondsLeft = scanFps > 0 && remainingChunks > 0 ? Math.ceil(remainingChunks / scanFps) : 0;
 
   return (
@@ -757,14 +568,6 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
                       </div>
                     )}
 
-                    {/* Live Auto-Capture Snapshot Counter */}
-                    {permissionGranted && (
-                      <div className="absolute top-3 left-3 bg-zinc-950/80 border border-zinc-700 px-3 py-1 rounded-full text-[11px] text-cyan-400 font-mono font-bold flex items-center gap-2 z-10 shadow-lg">
-                        <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
-                        AUTO-CAPTURING (3 FPS): {totalSnapshotsTaken} PHOTOS
-                      </div>
-                    )}
-
                     {/* Viewfinder Target */}
                     {permissionGranted && (
                       <div className="absolute inset-12 border border-[#4cd7f6]/30 pointer-events-none flex items-center justify-center">
@@ -772,26 +575,6 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
                       </div>
                     )}
                   </div>
-
-                  {/* Captured Chunks Accumulator UI */}
-                  {totalCount > 0 && (
-                    <div className="mt-4 p-4 rounded-xl bg-zinc-900 border border-cyan-500/30 text-left font-mono">
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="text-xs text-cyan-400 font-bold uppercase">
-                          ACCUMULATED CHUNKS: {receivedCount} / {totalCount}
-                        </span>
-                        <span className="text-xs text-zinc-400 font-bold">
-                          {Math.floor((receivedCount / totalCount) * 100)}%
-                        </span>
-                      </div>
-                      <div className="w-full bg-zinc-950 h-2.5 rounded-full overflow-hidden border border-zinc-800">
-                        <div
-                          className="bg-cyan-400 h-full transition-all duration-300"
-                          style={{ width: `${(receivedCount / totalCount) * 100}%` }}
-                        />
-                      </div>
-                    </div>
-                  )}
                 </>
               ) : (
                 /* 6-Digit Passkey Entry View */
@@ -854,45 +637,6 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
                       </>
                     )}
                   </button>
-
-                  {/* Multi-File Batch Ready UI */}
-                  {receivedFiles && receivedFiles.length > 0 && (
-                    <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 text-left w-full max-w-md mx-auto mt-4 font-mono">
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="text-xs font-mono font-bold text-cyan-400">
-                          BATCH READY ({receivedFiles.length} FILES)
-                        </span>
-                        {receivedFiles.length > 1 && (
-                          <button
-                            onClick={() => handleDownloadAll(receivedFiles)}
-                            className="px-3 py-1.5 rounded bg-cyan-400 text-black text-xs font-mono font-bold hover:bg-cyan-300 transition-colors"
-                          >
-                            ⚡ DOWNLOAD ALL ({receivedFiles.length})
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
-                        {receivedFiles.map((file, idx) => (
-                          <div key={idx} className="flex items-center justify-between p-2.5 rounded bg-zinc-950 border border-zinc-800">
-                            <div className="truncate max-w-[200px]">
-                              <p className="text-xs font-mono text-zinc-200 truncate">{file.name}</p>
-                              <p className="text-[10px] font-mono text-zinc-500">{(file.size / (1024 * 1024)).toFixed(2)} MB</p>
-                            </div>
-                            <a
-                              href={file.url}
-                              download={file.name}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-xs font-mono text-cyan-400 border border-zinc-700"
-                            >
-                              Download
-                            </a>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
                 </div>
               )}
             </div>
@@ -1039,7 +783,6 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
             setTotalChunks(null);
           }}
           result={result}
-          batchFiles={receivedFiles}
         />
       )}
     </div>

@@ -20,7 +20,6 @@ interface CompletionModalProps {
   totalChunks?: number;
   textContent?: string;
   result?: ReassemblyResult;
-  batchFiles?: { url: string; name: string }[];
 }
 
 /** Maps file extension to a display language label for code preview */
@@ -46,25 +45,9 @@ export default function CompletionModal({
   totalChunks,
   textContent,
   result,
-  batchFiles,
 }: CompletionModalProps) {
   const [activeTab, setActiveTab] = useState<"code" | "meta">("code");
   const [copied, setCopied] = useState(false);
-
-  const downloadAllFiles = (files: { url: string; name: string }[]) => {
-    files.forEach((file, index) => {
-      setTimeout(() => {
-        const a = document.createElement("a");
-        a.href = file.url;
-        a.download = file.name;
-        a.target = "_blank";
-        a.rel = "noopener noreferrer";
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-      }, index * 300);
-    });
-  };
 
   const activeBlobUrl = result?.blobUrl || blobUrl || "";
   const activeFileName = result?.fileName || fileName || "downloaded_file";
@@ -223,24 +206,16 @@ export default function CompletionModal({
           >
             Close
           </button>
-          {batchFiles && batchFiles.length > 0 ? (
-            <button
-              onClick={() => downloadAllFiles(batchFiles)}
-              className="px-6 py-2.5 bg-[#4cd7f6] text-[#003640] font-bold text-[11px] uppercase tracking-wider hover:bg-[#acedff] transition-all flex items-center gap-2 font-mono"
-              style={{ boxShadow: "0 0 15px rgba(76,215,246,0.4)" }}
-            >
-              ⚡ DOWNLOAD ALL ({batchFiles.length} FILES)
-            </button>
-          ) : activeBlobUrl ? (
+          {activeBlobUrl && (
             <a
               href={activeBlobUrl}
               download={activeFileName}
-              className="px-6 py-2.5 bg-[#4edea3] text-[#003640] font-bold text-[11px] uppercase tracking-wider hover:bg-[#acedff] transition-all flex items-center gap-2 font-mono"
+              className="px-6 py-2.5 bg-[#4edea3] text-[#003640] font-bold text-[11px] uppercase tracking-wider hover:bg-[#acedff] transition-all flex items-center gap-2"
               style={{ boxShadow: "0 0 15px rgba(78,222,163,0.4)" }}
             >
               ⬇ Download File ({activeFileName})
             </a>
-          ) : null}
+          )}
         </div>
       </div>
     </div>

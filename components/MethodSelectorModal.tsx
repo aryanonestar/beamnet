@@ -72,54 +72,51 @@ export default function MethodSelectorModal({
         </div>
 
         {/* Transfer Options */}
-        <div className="space-y-3 font-mono">
-          {/* 1. DE-EMPHASIZED OPTION: AIR-GAPPED OPTICAL STREAM */}
+        <div className="grid grid-cols-1 gap-3">
+          {/* Option 1: Optical QR */}
           <button
-            type="button"
             onClick={() => {
               onSelectMethod("optical");
               onClose();
             }}
-            className="w-full text-left p-4 rounded-xl border border-zinc-800 bg-zinc-900/30 hover:bg-zinc-900/70 hover:border-zinc-700 transition-all group flex items-start gap-4 opacity-75 hover:opacity-100"
+            className={cn(
+              "p-4 border bg-[#0e0e10] text-left flex items-start gap-4 transition-all group hover:border-[#4edea3]",
+              "border-[#3d494c]"
+            )}
           >
-            <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800 text-zinc-400 group-hover:text-cyan-400 transition-colors flex-shrink-0">
+            <div className="p-3 border border-[#4edea3]/30 bg-[#4edea3]/10 text-[#4edea3] group-hover:scale-105 transition-transform shrink-0">
               <QrCode size={24} />
             </div>
-
-            <div className="flex-1">
-              <div className="text-xs font-bold text-zinc-300 uppercase tracking-wider">
-                AIR-GAPPED OPTICAL STREAM
+            <div>
+              <div className="text-[13px] font-mono font-bold text-[#e5e1e4] uppercase tracking-wider group-hover:text-[#4edea3] transition-colors">
+                Air-Gapped Optical Stream
               </div>
-              <p className="text-[11px] text-zinc-500 mt-1 leading-relaxed">
+              <p className="text-[11px] font-mono text-[#869397] mt-1">
                 Pure Air-Gapped Transmission (Sequential QR Stream). 100% offline, zero network required.
               </p>
             </div>
           </button>
 
-          {/* 2. PRIMARY HIGHLIGHTED OPTION: PRIVATE ENCRYPTED CLOUD */}
+          {/* Option 2: Cloud Upload */}
           <button
-            type="button"
             onClick={() => {
               onSelectMethod("cloud");
               onClose();
             }}
-            className="relative w-full text-left p-4 rounded-xl border-2 border-cyan-400/90 bg-cyan-950/25 hover:bg-cyan-950/40 shadow-lg shadow-cyan-500/10 transition-all flex items-start gap-4 group ring-1 ring-cyan-400/20"
+            className={cn(
+              "p-4 border bg-[#0e0e10] text-left flex items-start gap-4 transition-all group hover:border-[#4cd7f6]",
+              "border-[#3d494c]"
+            )}
           >
-            {/* HIGHLIGHT BADGE IN TOP RIGHT */}
-            <span className="absolute -top-2.5 right-4 bg-cyan-400 text-black font-black text-[9px] px-2.5 py-0.5 rounded-full tracking-wider uppercase shadow-md shadow-cyan-400/30 flex items-center gap-1">
-              <span>⚡</span> RECOMMENDED
-            </span>
-
-            <div className="p-3 rounded-lg bg-cyan-900/40 border border-cyan-500/40 text-cyan-400 flex-shrink-0 group-hover:scale-105 transition-transform">
+            <div className="p-3 border border-[#4cd7f6]/30 bg-[#4cd7f6]/10 text-[#4cd7f6] group-hover:scale-105 transition-transform shrink-0">
               <CloudUpload size={24} />
             </div>
-
-            <div className="flex-1">
-              <div className="text-xs font-bold text-cyan-300 uppercase tracking-wider flex items-center gap-2">
-                PRIVATE ENCRYPTED CLOUD
+            <div>
+              <div className="text-[13px] font-mono font-bold text-[#e5e1e4] uppercase tracking-wider group-hover:text-[#4cd7f6] transition-colors">
+                Vercel Cloud Blob
               </div>
-              <p className="text-[11px] text-zinc-300 mt-1 leading-relaxed font-normal">
-                Fast cloud upload returning a single URL QR code & instant 6-digit code.
+              <p className="text-[11px] font-mono text-[#869397] mt-1">
+                Cloud Direct Upload (Instant Link). Fast cloud upload returning a single URL QR code.
               </p>
             </div>
           </button>

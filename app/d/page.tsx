@@ -7,8 +7,7 @@ import { Download, CheckCircle, ShieldCheck } from "lucide-react";
 function DownloadContent() {
   const searchParams = useSearchParams();
   const pathname = searchParams.get("p") || searchParams.get("pathname") || "";
-  const rawFilename = searchParams.get("f") || searchParams.get("filename") || pathname.split("/").pop() || "downloaded_file";
-  const filename = rawFilename.replace(/\.enc$/, "");
+  const filename = searchParams.get("f") || searchParams.get("filename") || pathname.split("/").pop() || "downloaded_file";
 
   const [downloadStarted, setDownloadStarted] = useState(false);
 
@@ -16,6 +15,7 @@ function DownloadContent() {
 
   useEffect(() => {
     if (pathname) {
+      // Trigger automatic instant download immediately on page load
       setDownloadStarted(true);
       const timer = setTimeout(() => {
         window.location.href = downloadApiUrl;
@@ -56,7 +56,7 @@ function DownloadContent() {
             <ShieldCheck className="text-[#4edea3]" size={28} />
           </div>
           <h1 className="text-2xl font-bold text-[#4cd7f6] tracking-tight uppercase">BEAM-NET SECURE DOWNLOAD</h1>
-          <p className="text-[11px] font-mono text-[#869397]">Transferred via Private Encrypted Cloud</p>
+          <p className="text-[11px] font-mono text-[#869397]">Private Vercel Blob Store Transfer</p>
         </div>
 
         {/* File Card */}

@@ -4,19 +4,15 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import QRCode from "qrcode";
 import * as SliderPrimitive from "@radix-ui/react-slider";
 import {
-  generateId, compressFile, createChunks, inferMimeType, createPipePackets, type Chunk,
+  generateId, compressFile, createChunks, inferMimeType, type Chunk,
 } from "@/lib/chunker";
 import { cn } from "@/utils/cn";
 import Link from "next/link";
 import MethodSelectorModal from "@/components/MethodSelectorModal";
 import MatrixProgress from "@/components/MatrixProgress";
-import JSZip from "jszip";
-import { upload as vercelClientUpload } from "@vercel/blob/client";
-
 
 const CHUNK_SIZE = 220; // 220 base64 chars = ~360 total bytes per QR frame (Version 11 61x61 QR grid with 8.2px modules)
 const THRESHOLD_BYTES = 100 * 1024; // 100 KB threshold (102,400 bytes)
-const MAX_CLOUD_SIZE = 500 * 1024 * 1024; // 500 MB max limit (524,288,000 bytes)
 const DEFAULT_LOCAL_LAN_IP = "10.180.96.252:3000";
 
 export interface CloudBlobPayload {
@@ -30,37 +26,8 @@ export interface CloudBlobPayload {
 export default function Broadcaster() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
   const [file, setFile] = useState<File | null>(null);
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [isZipping, setIsZipping] = useState(false);
   const [transferMode, setTransferMode] = useState<"optical" | "cloud">("optical");
-
-  // Helper function: Bundles multi-file selections into a single .zip File object
-  const prepareFilesForTransfer = async (files: File[]): Promise<File> => {
-    if (files.length <= 1) {
-      return files[0];
-    }
-
-    console.log(`Packaging ${files.length} files into zip archive...`);
-    const zip = new JSZip();
-
-    files.forEach((f) => {
-      zip.file(f.name, f);
-    });
-
-    const zipBlob = await zip.generateAsync({
-      type: "blob",
-      compression: "STORE",
-    });
-
-    const zipFileName = `beamnet_files_${files.length}_items.zip`;
-
-    return new File([zipBlob], zipFileName, {
-      type: "application/zip",
-    });
-  };
   const [chunks, setChunks] = useState<Chunk[]>([]);
   const [currentIdx, setCurrentIdx] = useState(0);
   const [fps, setFps] = useState(8);
@@ -68,6 +35,7 @@ export default function Broadcaster() {
   const [originalSize, setOriginalSize] = useState(0);
   const [compressedSize, setCompressedSize] = useState(0);
   const [preparing, setPreparing] = useState(false);
+  const [brightnessOn, setBrightnessOn] = useState(true);
   const [dragOver, setDragOver] = useState(false);
 
   // Vercel App Domain / Host IP for Phone QR Scans (e.g. beam-net.vercel.app or 10.180.96.252:3000)
@@ -79,14 +47,7 @@ export default function Broadcaster() {
   // Cloud Mode state
   const [cloudUrl, setCloudUrl] = useState<string>("");
   const [uploadProgress, setUploadProgress] = useState<number>(0);
-
-  // Helper: Monotonic Progress Setter (Progress can NEVER move backwards)
-  const setUploadProgressMonotonic = useCallback((newVal: number) => {
-    setUploadProgress((prev) => Math.max(prev, Math.min(100, Math.floor(newVal))));
-  }, []);
-
   const [fallbackNotice, setFallbackNotice] = useState<string>("");
-  const uploadInProgressRef = useRef(false);
 
   // 6-Digit Passkey state
   const [passkey, setPasskey] = useState<string>("");
@@ -95,26 +56,6 @@ export default function Broadcaster() {
 
   // Modal State
   const [showSelectorModal, setShowSelectorModal] = useState(false);
-
-  // Pasted Link State
-  const [pastedUrl, setPastedUrl] = useState<string>("");
-
-  // Convert pasted link into a virtual File object and feed it to the existing transfer engine
-  const handleSendPastedLink = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    const trimmedUrl = pastedUrl.trim();
-    if (!trimmedUrl) return;
-
-    const formattedUrl = /^https?:\/\//i.test(trimmedUrl)
-      ? trimmedUrl
-      : `https://${trimmedUrl}`;
-
-    const linkBlob = new Blob([formattedUrl], { type: "text/plain" });
-    const virtualLinkFile = new File([linkBlob], "shared_link.txt", { type: "text/plain" });
-
-    await processSelectedFiles([virtualLinkFile]);
-    setPastedUrl("");
-  };
 
   // Initialize Host
   useEffect(() => {
@@ -127,16 +68,13 @@ export default function Broadcaster() {
     }
   }, []);
 
-  const [opticalPackets, setOpticalPackets] = useState<string[]>([]);
-
-  // ── Render QR to Data URL (Optimized for Google Lens & Scanner Speed) ──
+  // ── Render QR to Data URL ─────────────────────────────────
   const generateQrDataUrl = useCallback(async (content: string) => {
     try {
-      const isUrl = content.startsWith("http://") || content.startsWith("https://");
       const dataUrl = await QRCode.toDataURL(content, {
-        errorCorrectionLevel: isUrl ? "M" : "L", // Medium error correction for URLs (Google Lens recovery)
-        margin: 4, // ISO 18004 4-module quiet zone for instant Google Lens finder pattern detection
-        width: 600, // 600px high-resolution canvas for sharp sub-pixel rendering
+        errorCorrectionLevel: "M", // M > L: more noise resilient for camera scans
+        margin: 1,
+        width: 500, // Larger = bigger modules on screen = easier phone camera detection
         color: { dark: "#000000", light: "#ffffff" },
       });
       setQrDataUrl(dataUrl);
@@ -152,8 +90,6 @@ export default function Broadcaster() {
     setUploadProgress(5);
     setPasskey("");
 
-    const filesToUpload = selectedFiles.length > 0 ? selectedFiles : [selected];
-
     try {
       const progressTimer = setInterval(() => {
         setUploadProgress((prev) => (prev < 90 ? prev + 10 : prev));
@@ -165,13 +101,6 @@ export default function Broadcaster() {
 
       setCompressedSize(compressed.length);
       const mimeType = inferMimeType(selected.name, selected.type);
-      
-      // Adaptive chunk size: 180 base64 chars for optimal balance of frame count and module size
-      const opticalChunkSize = compressed.length > 50 * 1024 ? 220 : 180;
-      const sessionId = Math.random().toString(36).substring(2, 6);
-      const packets = createPipePackets(compressed, selected.name, mimeType, opticalChunkSize, sessionId);
-      setOpticalPackets(packets);
-      
       const generated = createChunks(compressed, CHUNK_SIZE, {
         id: generateId(),
         mimeType,
@@ -180,78 +109,119 @@ export default function Broadcaster() {
       });
       setChunks(generated);
       setCurrentIdx(0);
+
+      // Upload payload to blob store so the 6-digit code has a valid download target
+      let uploadedPathname = "";
+      let uploadedFileUrl = "";
+
+      try {
+        const formData = new FormData();
+        formData.append("file", selected);
+        formData.append("filename", selected.name);
+        const uploadRes = await fetch("/api/blob/upload", {
+          method: "POST",
+          body: formData,
+        });
+        if (uploadRes.ok) {
+          const uploadJson = await uploadRes.json();
+          uploadedPathname = uploadJson.pathname || "";
+          uploadedFileUrl = uploadJson.url || "";
+        }
+      } catch (uErr) {
+        console.warn("Background upload warning for passkey target:", uErr);
+      }
+
+      // Generate 6-digit code for optical file as well
+      const codeRes = await fetch("/api/code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fileUrl: uploadedFileUrl,
+          pathname: uploadedPathname,
+          fileName: selected.name,
+          fileSize: selected.size,
+          mimeType,
+        }),
+      });
+
+      if (codeRes.ok) {
+        const codeData = await codeRes.json();
+        setPasskey(codeData.code);
+        setPasskeyExpiresAt(codeData.expiresAt);
+      }
+
       setUploadProgress(100);
 
-      // Render first QR frame IMMEDIATELY (0ms delay)
-      if (packets.length > 0) {
-        await generateQrDataUrl(packets[0]);
+      if (generated.length > 0) {
+        await generateQrDataUrl(JSON.stringify(generated[0]));
       }
-      setPreparing(false);
-
-      // Asynchronous non-blocking background passkey registration (does not delay QR rendering)
-      (async () => {
-        try {
-          const uploadResults: Array<{ name: string; url: string; size: number; type: string; pathname?: string }> = [];
-          for (const f of filesToUpload) {
-            try {
-              const formData = new FormData();
-              formData.append("file", f);
-              formData.append("filename", f.name);
-              const uploadRes = await fetch("/api/blob/upload", {
-                method: "POST",
-                body: formData,
-              });
-              if (uploadRes.ok) {
-                const uploadJson = await uploadRes.json();
-                uploadResults.push({
-                  name: f.name,
-                  url: uploadJson.url || "",
-                  size: f.size,
-                  type: f.type || inferMimeType(f.name, f.type),
-                  pathname: uploadJson.pathname || "",
-                });
-              }
-            } catch (uErr) {
-              console.warn("Background upload warning for passkey target:", uErr);
-            }
-          }
-
-          if (uploadResults.length > 0) {
-            const codeRes = await fetch("/api/code", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ files: uploadResults }),
-            });
-
-            if (codeRes.ok) {
-              const codeData = await codeRes.json();
-              setPasskey(codeData.code);
-              setPasskeyExpiresAt(codeData.expiresAt);
-            }
-          }
-        } catch {
-          /* background fallback ignore */
-        }
-      })();
     } catch (err) {
       console.error("Compression error:", err);
-      setPreparing(false);
+    } finally {
+      setTimeout(() => setPreparing(false), 300);
     }
-  }, [generateQrDataUrl, selectedFiles]);
+  }, [generateQrDataUrl]);
 
-  // ── Execute Cloud Upload & Publish Cross-Device Passkey ──────
+  // ── Execute Private Cloud Upload with XHR & Generate 6-Digit Code ──────
   const startCloudUpload = useCallback(async (selected: File) => {
     setTransferMode("cloud");
     setPreparing(true);
     setFallbackNotice("");
-    setUploadProgress(10);
-    setPasskey("");
     setCloudUrl("");
-    setQrDataUrl("");
-
-    const filesToUpload = selectedFiles.length > 0 ? selectedFiles : [selected];
+    setPasskey("");
+    setUploadProgress(2);
 
     try {
+      // 1. Health check
+      const healthRes = await fetch("/api/blob/health");
+      const healthData = await healthRes.json();
+
+      if (!healthData.ready) {
+        throw new Error(healthData.error || "Server token not ready");
+      }
+
+      setUploadProgress(10);
+
+      // 2. Upload file via XHR
+      const formData = new FormData();
+      formData.append("file", selected);
+      formData.append("filename", selected.name);
+
+      const uploadData = await new Promise<{ pathname: string; url: string }>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "/api/blob/upload");
+
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            const pct = Math.round((e.loaded / e.total) * 75) + 10;
+            setUploadProgress(pct);
+          }
+        };
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              resolve(JSON.parse(xhr.responseText));
+            } catch {
+              reject(new Error("Invalid server JSON response"));
+            }
+          } else {
+            try {
+              const errJson = JSON.parse(xhr.responseText);
+              reject(new Error(errJson.error || "Upload failed"));
+            } catch {
+              reject(new Error(`Upload failed with status ${xhr.status}`));
+            }
+          }
+        };
+
+        xhr.onerror = () => reject(new Error("Network error during blob upload"));
+        xhr.send(formData);
+      });
+
+      setUploadProgress(85);
+
+      // 3. Construct landing page URL
       let activeHost = customHost.trim();
       if (!activeHost) {
         if (typeof window !== "undefined") {
@@ -268,200 +238,42 @@ export default function Broadcaster() {
           ? "https://"
           : "http://";
 
-      let targetFileToUpload: File;
+      const targetDownloadPageUrl = `${protocol}${activeHost}/d?p=${encodeURIComponent(uploadData.pathname)}&f=${encodeURIComponent(selected.name)}`;
+      setCloudUrl(targetDownloadPageUrl);
 
-      // 1. Bundle multi-files into client-side .zip instantly if needed
-      if (filesToUpload.length > 1) {
-        setIsZipping(true);
-        const zip = new JSZip();
-        filesToUpload.forEach((f) => zip.file(f.name, f));
-
-        const zipBlob = await zip.generateAsync({ type: "blob", compression: "STORE" });
-
-        const zipFileName = `beamnet_files_${filesToUpload.length}_items.zip`;
-        targetFileToUpload = new File([zipBlob], zipFileName, { type: "application/zip" });
-        setIsZipping(false);
-        setFile(targetFileToUpload);
-      } else {
-        targetFileToUpload = selected;
-        setFile(targetFileToUpload);
-      }
-
-      const instantPasskey = Math.floor(100000 + Math.random() * 900000).toString();
-      const localBlobUrl = URL.createObjectURL(targetFileToUpload);
-      const mime = targetFileToUpload.type || inferMimeType(targetFileToUpload.name, targetFileToUpload.type);
-
-      // Save local record for instant same-device retrieval
-      const localRecord = {
-        code: instantPasskey,
-        name: targetFileToUpload.name,
-        fileName: targetFileToUpload.name,
-        fileSize: targetFileToUpload.size,
-        mimeType: mime,
-        size: targetFileToUpload.size,
-        type: mime,
-        url: localBlobUrl,
-        fileUrl: localBlobUrl,
-        files: [
-          {
-            name: targetFileToUpload.name,
-            url: localBlobUrl,
-            size: targetFileToUpload.size,
-            type: mime,
-          },
-        ],
-        expiresAt: Date.now() + 15 * 60 * 1000,
-      };
-
-      try {
-        sessionStorage.setItem(`beamnet_passkey_${instantPasskey}`, JSON.stringify(localRecord));
-        localStorage.setItem(`beamnet_passkey_${instantPasskey}`, JSON.stringify(localRecord));
-        localStorage.setItem(`beamnet_last_file`, JSON.stringify(localRecord));
-      } catch {
-        /* storage fallback ignore */
-      }
-
-      setUploadProgressMonotonic(25);
-
-      // 2. Upload binary stream to /api/upload (saves to disk cache & Vercel Blob)
-      // Generates a universal HTTP download URL (/api/d?p=...) accessible by ANY device!
-      const blobResult = await new Promise<{ url: string; pathname: string }>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", "/api/upload", true);
-        xhr.setRequestHeader("x-filename", targetFileToUpload.name);
-        xhr.setRequestHeader("Content-Type", mime);
-        xhr.timeout = 180000;
-
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) {
-            const pct = 25 + Math.floor((e.loaded / e.total) * 55);
-            setUploadProgressMonotonic(pct);
-          }
-        };
-
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            try {
-              const data = JSON.parse(xhr.responseText);
-              if (data.url) {
-                resolve({ url: data.url, pathname: data.pathname || "" });
-              } else {
-                reject(new Error("No URL returned from upload route"));
-              }
-            } catch {
-              reject(new Error("Failed to parse upload response"));
-            }
-          } else {
-            reject(new Error(`Upload failed with HTTP ${xhr.status}`));
-          }
-        };
-
-        xhr.onerror = () => reject(new Error("Network error during file upload"));
-        xhr.ontimeout = () => reject(new Error("Upload timed out"));
-        xhr.send(targetFileToUpload);
-      }).catch((uploadErr) => {
-        console.warn("[BEAM-NET] Server upload warning, using HTTP route fallback:", uploadErr);
-        return {
-          url: `/api/d?p=${encodeURIComponent(targetFileToUpload.name)}&f=${encodeURIComponent(targetFileToUpload.name)}`,
-          pathname: targetFileToUpload.name,
-        };
-      });
-
-
-      setUploadProgressMonotonic(85);
-
-      // 3. Construct remote passkey record with public file URL
-      const finalFileUrl = blobResult.url || localBlobUrl;
-      const remoteRecord = {
-        code: instantPasskey,
-        name: targetFileToUpload.name,
-        fileName: targetFileToUpload.name,
-        fileSize: targetFileToUpload.size,
-        mimeType: mime,
-        size: targetFileToUpload.size,
-        type: mime,
-        url: finalFileUrl,
-        fileUrl: finalFileUrl,
-        pathname: blobResult.pathname,
-        files: [
-          {
-            name: targetFileToUpload.name,
-            url: finalFileUrl,
-            size: targetFileToUpload.size,
-            type: mime,
-            pathname: blobResult.pathname,
-          },
-        ],
-        expiresAt: Date.now() + 15 * 60 * 1000,
-      };
-
-      // Update local storage with remote URL
-      try {
-        sessionStorage.setItem(`beamnet_passkey_${instantPasskey}`, JSON.stringify(remoteRecord));
-        localStorage.setItem(`beamnet_passkey_${instantPasskey}`, JSON.stringify(remoteRecord));
-        localStorage.setItem(`beamnet_last_file`, JSON.stringify(remoteRecord));
-      } catch {
-        /* ignore */
-      }
-
-      // 4. Register passkey with /api/code for cross-device phone lookup
-      await fetch("/api/code", {
+      // 4. Generate 6-Digit Passkey
+      const codeRes = await fetch("/api/code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: instantPasskey, files: remoteRecord.files }),
-      }).catch((e) => console.warn("Code registration warning:", e));
+        body: JSON.stringify({
+          fileUrl: targetDownloadPageUrl,
+          pathname: uploadData.pathname,
+          fileName: selected.name,
+          fileSize: selected.size,
+          mimeType: selected.type || inferMimeType(selected.name, selected.type),
+        }),
+      });
 
-      // 5. Upload 1KB metadata JSON file to Vercel Blob passkeys/ for universal public retrieval
-      let publicMetaUrl = "";
-      try {
-        const metaPayload = JSON.stringify(remoteRecord);
-        const metaRes = await fetch("/api/upload", {
-          method: "POST",
-          headers: {
-            "x-filename": `passkeys/${instantPasskey}.json`,
-            "Content-Type": "application/json",
-          },
-          body: metaPayload,
-        });
-        if (metaRes.ok) {
-          const metaJson = await metaRes.json();
-          publicMetaUrl = metaJson.url || "";
-        }
-      } catch (metaUploadErr) {
-        console.warn("Public passkey JSON upload warning:", metaUploadErr);
+      if (codeRes.ok) {
+        const codeData = await codeRes.json();
+        setPasskey(codeData.code);
+        setPasskeyExpiresAt(codeData.expiresAt);
       }
 
-      setUploadProgressMonotonic(95);
-
-      // 6. Build clean, short Receiver Share URL & render scannable QR Code
-      // Short ~35-char URL produces a Version 3 (29x29) QR grid — instantly scannable by any mobile phone camera!
-      const shareTargetUrl = `${protocol}${activeHost}/scan?code=${instantPasskey}`;
-
-      setPasskey(instantPasskey);
-      setCloudUrl(shareTargetUrl);
-      await generateQrDataUrl(shareTargetUrl);
-
-      setUploadProgressMonotonic(100);
-      setPreparing(false);
+      setUploadProgress(100);
+      await generateQrDataUrl(targetDownloadPageUrl);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Upload process error";
-      console.error("Upload process warning:", msg);
-      setIsZipping(false);
-      setUploadProgressMonotonic(100);
-      setPreparing(false);
+      const msg = err instanceof Error ? err.message : "Upload failed";
+      console.warn("Private Blob upload failed — auto falling back to Optical Air-Gapped Stream:", msg);
+      setFallbackNotice(`Private Blob upload skipped (${msg}) — automatically switched to Air-Gapped Optical QR Stream.`);
+      await startOpticalChunking(selected);
+    } finally {
+      setTimeout(() => setPreparing(false), 400);
     }
-  }, [customHost, generateQrDataUrl, selectedFiles]);
+  }, [customHost, generateQrDataUrl, startOpticalChunking]);
 
-  // ── Process File with 500MB Limit & 100KB Threshold Rule ──
+  // ── Process File with 100KB Threshold Rule ───────────────
   const processFile = useCallback(async (selected: File) => {
-    if (!selected) return;
-
-    // 1. HARD CEILING CHECK (Prevents RAM crashes & serverless token overflow)
-    if (selected.size > MAX_CLOUD_SIZE) {
-      alert("File size exceeds 500 MB. Please select a smaller file.");
-      return;
-    }
-
     setFile(selected);
     setOriginalSize(selected.size);
     setPlaying(false);
@@ -471,12 +283,9 @@ export default function Broadcaster() {
     setChunks([]);
     setQrDataUrl("");
 
-    // 2. HYBRID ROUTING CHECK
     if (selected.size > THRESHOLD_BYTES) {
-      // Files > 100 KB: route directly to Cloud Upload (skip Gzip/pako buffer allocation)
       await startCloudUpload(selected);
     } else {
-      // Files <= 100 KB: Run air-gapped Gzip compression & optical stream
       try {
         const compressed = await compressFile(selected);
         setCompressedSize(compressed.length);
@@ -497,78 +306,37 @@ export default function Broadcaster() {
     }
   };
 
-  const MAX_FILE_COUNT = 50;
-
-  const processSelectedFiles = async (incomingFiles: FileList | File[]) => {
-    const fileArray = Array.from(incomingFiles);
-
-    if (fileArray.length === 0) return;
-
-    if (fileArray.length > MAX_FILE_COUNT) {
-      alert(`Maximum 50 files allowed per batch. Processing the first 50 selected files.`);
-    }
-
-    // Cap array at 50 files maximum
-    const batch = fileArray.slice(0, MAX_FILE_COUNT);
-    setSelectedFiles(batch);
-
-    try {
-      // For multi-file batches: startCloudUpload already handles zipping internally.
-      // Pass the first file as the "selected" trigger — startCloudUpload reads selectedFiles state.
-      // This avoids double-zip (prepareFilesForTransfer + startCloudUpload both zipping).
-      const triggerFile = batch[0];
-      setFile(triggerFile);
-      await processFile(triggerFile);
-    } catch (err) {
-      console.error("Failed to prepare files for transfer:", err);
-      setIsZipping(false);
-      alert("Error preparing files for transfer. Please try again.");
-    }
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) processFile(f);
   };
 
-  // Handle Drag and Drop
-  const handleDrop = (e: React.DragEvent<HTMLLabelElement | HTMLDivElement>) => {
+  const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      processSelectedFiles(e.dataTransfer.files);
-    }
+    const f = e.dataTransfer.files?.[0];
+    if (f) processFile(f);
   };
 
-  // Handle Input Selection
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      processSelectedFiles(e.target.files);
-    }
-  };
-
-  // Render optical pipe packet when currentIdx changes
+  // Render optical chunk when currentIdx changes
   useEffect(() => {
-    if (transferMode === "optical" && opticalPackets.length > 0) {
-      generateQrDataUrl(opticalPackets[currentIdx % opticalPackets.length]);
-    } else if (transferMode === "optical" && chunks.length > 0) {
-      generateQrDataUrl(JSON.stringify(chunks[currentIdx % chunks.length]));
+    if (transferMode === "optical" && chunks.length > 0) {
+      generateQrDataUrl(JSON.stringify(chunks[currentIdx]));
     }
-  }, [transferMode, currentIdx, opticalPackets, chunks, generateQrDataUrl]);
+  }, [transferMode, currentIdx, chunks, generateQrDataUrl]);
 
-const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized cadence
-
-  // 333ms (3 FPS) synchronized cadence interval loop
+  // Offline FPS loop
   useEffect(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
-    const packetCount = opticalPackets.length || chunks.length;
-    if (transferMode !== "optical" || !playing || packetCount === 0) return;
-
-    const frameDelay = fps > 0 ? Math.round(1000 / fps) : SYNC_CADENCE_MS;
-
+    if (transferMode !== "optical" || !playing || chunks.length === 0) return;
     intervalRef.current = setInterval(
-      () => setCurrentIdx((p) => (p + 1) % packetCount),
-      frameDelay
+      () => setCurrentIdx((p) => (p + 1) % chunks.length),
+      Math.round(1000 / fps)
     );
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [transferMode, playing, fps, opticalPackets.length, chunks.length]);
+  }, [transferMode, playing, fps, chunks.length]);
 
   const togglePlay = () => setPlaying((p) => !p);
 
@@ -662,13 +430,10 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
                   <label className="text-[10px] font-mono uppercase text-[#869397]">Target Domain / Host IP:</label>
                   <button
                     onClick={() => {
-                      const newHost = DEFAULT_LOCAL_LAN_IP;
-                      setCustomHost(newHost);
-                      if (passkey) {
-                        const protocol = typeof window !== "undefined" && window.location.protocol.startsWith("https") ? "https://" : "http://";
-                        const updatedUrl = `${protocol}${newHost}/scan?code=${passkey}`;
-                        setCloudUrl(updatedUrl);
-                        generateQrDataUrl(updatedUrl);
+                      setCustomHost(DEFAULT_LOCAL_LAN_IP);
+                      if (file) {
+                        if (transferMode === "cloud") startCloudUpload(file);
+                        else startOpticalChunking(file);
                       }
                     }}
                     className="text-[9px] font-mono text-[#4cd7f6] hover:underline"
@@ -680,50 +445,24 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
                   type="text"
                   value={customHost}
                   onChange={(e) => {
-                    const newHost = e.target.value;
-                    setCustomHost(newHost);
-                    if (passkey) {
-                      const protocol = typeof window !== "undefined" && window.location.protocol.startsWith("https") ? "https://" : "http://";
-                      const activeHost = newHost.trim() || (typeof window !== "undefined" ? window.location.host : DEFAULT_LOCAL_LAN_IP);
-                      const updatedUrl = `${protocol}${activeHost}/scan?code=${passkey}`;
-                      setCloudUrl(updatedUrl);
-                      generateQrDataUrl(updatedUrl);
+                    setCustomHost(e.target.value);
+                    if (file) {
+                      if (transferMode === "cloud") startCloudUpload(file);
+                      else startOpticalChunking(file);
                     }
                   }}
-                  placeholder="e.g. beamnet.app or 10.180.96.252:3000"
+                  placeholder="e.g. your-app.vercel.app or 10.180.96.252:3000"
                   className="bg-[#131315] border border-[#3d494c] text-[11px] font-mono text-[#4cd7f6] px-2 py-1 w-full focus:outline-none focus:border-[#4cd7f6]"
                 />
               </div>
 
-              {/* TOP SECTION: LINK INPUT BAR */}
-              <form 
-                onSubmit={handleSendPastedLink} 
-                className="p-2 mb-4 rounded-xl bg-zinc-950/80 border border-zinc-800 flex items-center gap-2 shadow-inner"
-              >
-                <span className="pl-3 text-cyan-400 text-sm">🔗</span>
-                <input
-                  type="url"
-                  value={pastedUrl}
-                  onChange={(e) => setPastedUrl(e.target.value)}
-                  placeholder="Paste any link to share (e.g. https://...)"
-                  className="w-full bg-transparent text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none px-2 py-1 font-mono"
-                />
-                <button
-                  type="submit"
-                  disabled={!pastedUrl.trim()}
-                  className="px-3 py-1.5 rounded-lg bg-cyan-400 hover:bg-cyan-300 disabled:opacity-40 disabled:hover:bg-cyan-400 text-black text-xs font-bold transition-all flex-shrink-0 font-mono uppercase"
-                >
-                  SEND LINK
-                </button>
-              </form>
-
               {/* Drop zone */}
               <label
                 className={cn(
-                  "p-8 rounded-2xl border-2 border-dashed transition-all duration-200 text-center cursor-pointer relative overflow-hidden flex flex-col items-center justify-center gap-2 mb-4",
+                  "border border-dashed bg-[#0e0e10] h-40 mb-4 flex flex-col items-center justify-center gap-2 cursor-pointer relative overflow-hidden transition-all",
                   dragOver
-                    ? "border-cyan-400 bg-cyan-950/30 shadow-lg shadow-cyan-500/20 scale-[1.01]"
-                    : "border-zinc-800 bg-zinc-900/40 hover:border-zinc-700"
+                    ? "border-[#4cd7f6] bg-[#4cd7f6]/5"
+                    : "border-[#3d494c] hover:border-[#4cd7f6] hover:bg-[#4cd7f6]/5"
                 )}
                 onDragOver={(e) => {
                   e.preventDefault();
@@ -736,64 +475,15 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
                 <p className="text-[11px] font-mono uppercase tracking-widest text-[#bcc9cd] text-center px-2">
                   {preparing
                     ? "Processing Payload..."
-                    : selectedFiles.length > 1
-                    ? `${selectedFiles.length} FILES SELECTED FOR BATCH`
                     : file
                     ? file.name
-                    : "DRAG & DROP SECURE PAYLOAD HERE (UP TO 50 FILES)"}
+                    : "DRAG & DROP SECURE PAYLOAD HERE"}
                 </p>
                 <p className="text-[9px] font-mono text-[#3d494c] text-center">
-                  Private Encrypted Cloud
+                  Private Vercel Blob Store (BEAM-NET / store_Uuhi1JVtHqWZuScC)
                 </p>
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleFileChange}
-                  multiple
-                  className="hidden"
-                />
+                <input type="file" onChange={handleFileChange} className="hidden" />
               </label>
-
-              {/* Zipping Status Badge */}
-              {isZipping && (
-                <div className="mt-3 p-3 bg-cyan-950/60 border border-cyan-500/40 rounded-lg text-center font-mono animate-pulse mb-4">
-                  <p className="text-cyan-400 text-xs font-bold flex items-center justify-center gap-2">
-                    <span>📦</span> COMPRESSING {selectedFiles.length} FILES INTO .ZIP ARCHIVE...
-                  </p>
-                </div>
-              )}
-
-              {/* Batch File Summary Queue UI */}
-              {selectedFiles.length > 0 && (
-                <div className="mb-4 p-4 rounded-xl bg-zinc-900 border border-zinc-800 text-left">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-mono font-bold text-cyan-400 uppercase">
-                      BATCH QUEUE ({selectedFiles.length} / 50 FILES)
-                    </span>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedFiles([]);
-                        setFile(null);
-                      }}
-                      className="text-xs text-rose-400 hover:text-rose-300 font-mono"
-                    >
-                      CLEAR ALL
-                    </button>
-                  </div>
-
-                  {/* Scrollable File List Preview */}
-                  <div className="max-h-36 overflow-y-auto space-y-1 pr-1">
-                    {selectedFiles.map((fileItem, idx) => (
-                      <div key={idx} className="flex justify-between text-xs font-mono text-zinc-300 bg-zinc-950/60 p-2 rounded border border-zinc-800/50">
-                        <span className="truncate max-w-[200px]">{fileItem.name}</span>
-                        <span className="text-zinc-500 font-mono">{(fileItem.size / (1024 * 1024)).toFixed(2)} MB</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
 
               {/* High-Contrast 6-Digit Passkey Card for Phone-to-PC Sharing */}
               {passkey ? (
@@ -818,13 +508,13 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
                     ))}
                   </div>
 
-                  <div className="flex flex-col items-center justify-center w-full text-[10px] font-mono text-[#bcc9cd] pt-1 gap-2">
+                  <div className="flex items-center justify-between w-full text-[10px] font-mono text-[#bcc9cd] pt-1">
                     <span>Type code on PC at <b className="text-[#4edea3]">/scan</b> to download</span>
                     <button
                       onClick={copyPasskey}
-                      className="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-xs font-mono text-cyan-400 flex items-center justify-center gap-2 transition-all border border-zinc-700 font-bold"
+                      className="bg-[#4edea3]/10 border border-[#4edea3] text-[#4edea3] px-3 py-1 text-[10px] font-mono uppercase hover:bg-[#4edea3] hover:text-[#003640] transition-colors font-bold"
                     >
-                      <span>{passkeyCopied ? "✓ COPIED TO CLIPBOARD" : "📋 COPY PASSKEY"}</span>
+                      {passkeyCopied ? "✓ Copied!" : "📋 Copy Code"}
                     </button>
                   </div>
                 </div>
@@ -884,7 +574,7 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
                 ) : (
                   <div className="flex flex-col gap-2">
                     <div className="w-full bg-[#4cd7f6]/10 border border-[#4cd7f6] text-[#4cd7f6] font-mono text-[11px] uppercase tracking-widest py-3 text-center">
-                      {cloudUrl ? "⚡ Instant Auto-Download & Code Active" : "Securing in Private Encrypted Cloud..."}
+                      {cloudUrl ? "⚡ Instant Auto-Download & Code Active" : "Uploading to Private Store..."}
                     </div>
                     {cloudUrl && (
                       <a
@@ -937,7 +627,7 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
               {/* Canvas / 10x10 Matrix Progress area */}
               <div className="flex-1 flex items-center justify-center bg-[#0e0e10] border border-[#3d494c] relative p-6 min-h-[400px]">
                 <div className="absolute top-3 left-3 text-[10px] font-mono text-[#3d494c]">
-                  {transferMode === "cloud" ? "STORE: PRIVATE ENCRYPTED CLOUD" : chunks.length > 0 ? `IDX: ${String(currentIdx).padStart(5, "0")}` : "X: -- Y: --"}
+                  {transferMode === "cloud" ? "STORE: store_Uuhi1JVtHqWZuScC" : chunks.length > 0 ? `IDX: ${String(currentIdx).padStart(5, "0")}` : "X: -- Y: --"}
                 </div>
                 <div className="absolute bottom-3 right-3 text-[10px] font-mono text-[#3d494c]">
                   {preparing ? "MATRIX-PROGRESS-STREAM" : transferMode === "cloud" ? "PASSKEY-6-DIGIT" : `SEQ: ${String(currentIdx).padStart(5, "0")}`}
@@ -947,7 +637,7 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
                 {preparing ? (
                   <MatrixProgress
                     progress={uploadProgress}
-                    statusText={transferMode === "cloud" ? "SECURING IN PRIVATE ENCRYPTED CLOUD..." : "COMPRESSING & CHUNKING PAYLOAD..."}
+                    statusText={transferMode === "cloud" ? "TRANSMITTING TO PRIVATE VERCEL BLOB..." : "COMPRESSING & CHUNKING PAYLOAD..."}
                     fileName={file?.name}
                   />
                 ) : (
@@ -1020,7 +710,7 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
       <footer className="fixed bottom-0 left-0 w-full bg-[#131315] border-t border-[#3d494c] p-4 z-40">
         <div className="max-w-[1440px] mx-auto w-full grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
           {/* FPS slider */}
-          <div className="md:col-span-4 flex flex-col gap-2">
+          <div className="md:col-span-3 flex flex-col gap-2">
             <div className="flex justify-between items-center">
               <span className="text-[11px] font-mono uppercase text-[#bcc9cd]">FPS Control</span>
               <span className="text-[18px] font-mono text-[#4cd7f6]">{fps}.0</span>
@@ -1048,12 +738,32 @@ const SYNC_CADENCE_MS = 333; // 3 FPS (333ms per frame/snapshot) - Synchronized 
             </div>
           </div>
 
+          {/* Brightness toggle */}
+          <div className="md:col-span-2 flex items-center justify-between border border-[#3d494c] px-3 py-2 bg-[#0e0e10]">
+            <span className="text-[11px] font-mono uppercase text-[#bcc9cd]">Max Brightness</span>
+            <button
+              onClick={() => setBrightnessOn((b) => !b)}
+              className="relative w-9 h-5 transition-colors"
+              style={{
+                backgroundColor: brightnessOn ? "#4cd7f6" : "#353437",
+                boxShadow: brightnessOn ? "0 0 8px rgba(76,215,246,0.3)" : "none",
+              }}
+            >
+              <div
+                className={cn(
+                  "absolute top-0.5 w-4 h-4 bg-white border border-[#3d494c] transition-transform duration-150",
+                  brightnessOn ? "translate-x-4" : "translate-x-0.5"
+                )}
+              />
+            </button>
+          </div>
+
           {/* Progress */}
-          <div className="md:col-span-8 flex flex-col gap-2">
+          <div className="md:col-span-7 flex flex-col gap-2">
             <div className="flex justify-between items-end">
               <div className="flex flex-col">
                 <span className="text-[11px] font-mono uppercase text-[#bcc9cd] mb-1">
-                  {transferMode === "cloud" ? "Private Encrypted Cloud Upload" : "Transmission Progress"}
+                  {transferMode === "cloud" ? "Private Blob Store Upload" : "Transmission Progress"}
                 </span>
                 <span className="text-[18px] font-mono text-[#e5e1e4]">
                   {transferMode === "cloud"
