@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { put, get, list } from "@vercel/blob";
+import { put, list } from "@vercel/blob";
+import fs from "fs";
+import path from "path";
+import os from "os";
 
 export interface FileItem {
   name: string;
@@ -20,8 +23,40 @@ export interface CodeEntry {
   expiresAt: number;
 }
 
-// Global server memory store for 6-digit codes
+// Global in-memory store for 6-digit codes
 const codeStore = new Map<string, CodeEntry>();
+const TMP_STORE_PATH = path.join(os.tmpdir(), "beamnet_codes_v1.json");
+
+function readDiskStore(): Record<string, CodeEntry> {
+  try {
+    if (fs.existsSync(TMP_STORE_PATH)) {
+      const raw = fs.readFileSync(TMP_STORE_PATH, "utf-8");
+      return JSON.parse(raw);
+    }
+  } catch {
+    /* ignore */
+  }
+  return {};
+}
+
+function saveToDiskStore(code: string, entry: CodeEntry) {
+  try {
+    const current = readDiskStore();
+    current[code] = entry;
+    fs.writeFileSync(TMP_STORE_PATH, JSON.stringify(current));
+  } catch {
+    /* ignore */
+  }
+}
+
+function getFromDiskStore(code: string): CodeEntry | undefined {
+  const current = readDiskStore();
+  const found = current[code];
+  if (found && found.expiresAt > Date.now()) {
+    return found;
+  }
+  return undefined;
+}
 
 // Cleanup expired entries periodically
 function cleanupExpiredCodes() {
@@ -41,7 +76,7 @@ function generate6DigitCode(): string {
   do {
     code = Math.floor(100000 + Math.random() * 900000).toString();
     attempts++;
-  } while (codeStore.has(code) && attempts < 1000);
+  } while ((codeStore.has(code) || getFromDiskStore(code)) && attempts < 1000);
   return code;
 }
 
@@ -76,7 +111,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     const code = requestedCode || generate6DigitCode();
-    const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes TTL
+    const expiresAt = Date.now() + 30 * 60 * 1000; // 30 minutes TTL for hackathon reliability
 
     const primaryFile = files[0];
     const entry: CodeEntry = {
@@ -90,32 +125,20 @@ export async function POST(request: Request): Promise<NextResponse> {
       expiresAt,
     };
 
-    // Store in local lambda memory
+    // Store in-memory map & disk storage
     codeStore.set(code, entry);
+    saveToDiskStore(code, entry);
 
-    // Persist to Vercel Blob publicly so any remote mobile phone or device can read it
+    // Persist to Vercel Blob publicly so any remote device can read it
     const token = process.env.BLOB_READ_WRITE_TOKEN;
     if (token) {
       const blobPath = `codes/${code}.json`;
       const passkeyPath = `passkeys/${code}.json`;
       const blobContent = JSON.stringify(entry);
 
-      const blobSavePromise = Promise.all([
-        put(blobPath, blobContent, {
-          access: "public",
-          token,
-          addRandomSuffix: false,
-        }).catch((e) => console.warn("Blob codes put warning:", e)),
-        put(passkeyPath, blobContent, {
-          access: "public",
-          token,
-          addRandomSuffix: false,
-        }).catch((e) => console.warn("Blob passkeys put warning:", e)),
-      ]);
-
-      Promise.race([
-        blobSavePromise,
-        new Promise((resolve) => setTimeout(resolve, 2500)),
+      Promise.all([
+        put(blobPath, blobContent, { access: "public", token, addRandomSuffix: false }).catch(() => null),
+        put(passkeyPath, blobContent, { access: "public", token, addRandomSuffix: false }).catch(() => null),
       ]).catch(() => null);
     }
 
@@ -125,7 +148,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       count: files.length,
       files,
       expiresAt,
-      ttlSeconds: 15 * 60,
+      ttlSeconds: 30 * 60,
     });
   } catch (error) {
     console.error("Code generation error:", error);
@@ -144,12 +167,17 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   cleanupExpiredCodes();
 
+  // 1. Check in-memory store
   let entry: CodeEntry | undefined = codeStore.get(code);
 
-  // If not in local memory, check Vercel Blob persistent store
+  // 2. Check persistent disk store
+  if (!entry) {
+    entry = getFromDiskStore(code);
+  }
+
+  // 3. Check Vercel Blob store
   const token = process.env.BLOB_READ_WRITE_TOKEN;
   if (!entry && token) {
-    // 1. Check passkeys/${code}.json and codes/${code}.json
     for (const prefix of [`passkeys/${code}`, `codes/${code}`]) {
       try {
         const { blobs } = await list({ prefix, token }).catch(() => ({ blobs: [] }));
@@ -169,6 +197,7 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   if (entry && entry.expiresAt > Date.now()) {
     codeStore.set(code, entry);
+    saveToDiskStore(code, entry);
   }
 
   if (!entry) {
