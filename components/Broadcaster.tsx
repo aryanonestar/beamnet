@@ -57,16 +57,8 @@ export default function Broadcaster() {
   // Modal State
   const [showSelectorModal, setShowSelectorModal] = useState(false);
 
-  // Initialize Host
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
-        setCustomHost(DEFAULT_LOCAL_LAN_IP);
-      } else {
-        setCustomHost(window.location.host);
-      }
-    }
-  }, []);
+  // Raw Text & Link Sharing state
+  const [pastedText, setPastedText] = useState<string>("");
 
   // ── Render QR to Data URL ─────────────────────────────────
   const generateQrDataUrl = useCallback(async (content: string) => {
@@ -80,6 +72,87 @@ export default function Broadcaster() {
       setQrDataUrl(dataUrl);
     } catch (err) {
       console.error("QR Generation Error:", err);
+    }
+  }, []);
+
+  // ── Share Raw Text or Link ─────────────────────────────────
+  const handleSendTextOrLink = useCallback(async (rawText: string) => {
+    if (!rawText.trim()) return;
+
+    setPreparing(true);
+    setUploadProgress(10);
+    setPasskey("");
+    setCloudUrl("");
+    setFallbackNotice("");
+
+    const isUrl = /^https?:\/\//i.test(rawText.trim());
+    const payloadType: "text" | "link" = isUrl ? "link" : "text";
+    const textFileName = isUrl ? "shared_link.txt" : "shared_text.txt";
+    const textBlob = new Blob([rawText.trim()], { type: isUrl ? "text/uri-list" : "text/plain" });
+    const textFile = new File([textBlob], textFileName, { type: isUrl ? "text/uri-list" : "text/plain" });
+
+    setFile(textFile);
+    setOriginalSize(textFile.size);
+    setCompressedSize(textFile.size);
+    setTransferMode("cloud");
+
+    try {
+      // Register text payload metadata directly with /api/code
+      const codeRes = await fetch("/api/code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: payloadType,
+          textContent: rawText.trim(),
+          fileName: textFileName,
+          fileSize: textFile.size,
+          mimeType: textFile.type,
+        }),
+      });
+
+      if (codeRes.ok) {
+        const codeData = await codeRes.json();
+        const generatedCode = codeData.code;
+
+        let activeHost = customHost.trim();
+        if (!activeHost) {
+          if (typeof window !== "undefined") {
+            activeHost = window.location.hostname === "localhost" ? DEFAULT_LOCAL_LAN_IP : window.location.host;
+          } else {
+            activeHost = DEFAULT_LOCAL_LAN_IP;
+          }
+        }
+
+        const protocol =
+          activeHost.startsWith("http://") || activeHost.startsWith("https://")
+            ? ""
+            : typeof window !== "undefined" && window.location.protocol.startsWith("https")
+            ? "https://"
+            : "http://";
+
+        const receiverUrl = `${protocol}${activeHost}/scan?code=${generatedCode}`;
+
+        setPasskey(generatedCode);
+        setPasskeyExpiresAt(codeData.expiresAt);
+        setCloudUrl(receiverUrl);
+        await generateQrDataUrl(receiverUrl);
+        setUploadProgress(100);
+      }
+    } catch (err) {
+      console.error("Text sharing error:", err);
+    } finally {
+      setPreparing(false);
+    }
+  }, [customHost, generateQrDataUrl]);
+
+  // Initialize Host
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+        setCustomHost(DEFAULT_LOCAL_LAN_IP);
+      } else {
+        setCustomHost(window.location.host);
+      }
     }
   }, []);
 

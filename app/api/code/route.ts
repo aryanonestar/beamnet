@@ -2,7 +2,7 @@ import { PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from "@aws-s
 import { NextResponse } from "next/server";
 import { getS3Client, BUCKET } from "@/lib/s3";
 
-interface CodeEntry {
+export interface CodeEntry {
   code: string;
   fileUrl: string;
   pathname?: string;
@@ -10,6 +10,8 @@ interface CodeEntry {
   fileSize: number;
   mimeType: string;
   expiresAt: number;
+  type?: "text" | "link" | "file";
+  textContent?: string;
 }
 
 const codeStore = new Map<string, CodeEntry>();
@@ -35,23 +37,27 @@ function generate6DigitCode(): string {
 export async function POST(request: Request): Promise<NextResponse> {
   try {
     const body = await request.json();
-    const { fileUrl, pathname, fileName, fileSize, mimeType } = body;
+    const { fileUrl, pathname, fileName, fileSize, mimeType, type, textContent } = body;
 
-    if (!fileName) {
-      return NextResponse.json({ error: "Missing file parameters" }, { status: 400 });
+    if (!fileName && !textContent) {
+      return NextResponse.json({ error: "Missing file or text parameters" }, { status: 400 });
     }
 
     const code = generate6DigitCode();
     const expiresAt = Date.now() + 15 * 60 * 1000;
 
+    const payloadType = type || (mimeType === "text/plain" && textContent ? "text" : "file");
+
     const entry: CodeEntry = {
       code,
       fileUrl: fileUrl || "",
       pathname: pathname || "",
-      fileName,
-      fileSize: Number(fileSize) || 0,
-      mimeType: mimeType || "application/octet-stream",
+      fileName: fileName || (payloadType === "link" ? "shared_link.txt" : "shared_text.txt"),
+      fileSize: Number(fileSize) || (textContent ? Buffer.byteLength(textContent) : 0),
+      mimeType: mimeType || (payloadType === "link" ? "text/uri-list" : "text/plain"),
       expiresAt,
+      type: payloadType,
+      textContent: textContent || "",
     };
 
     codeStore.set(code, entry);
@@ -70,7 +76,14 @@ export async function POST(request: Request): Promise<NextResponse> {
       console.warn("S3 passkey persistence warning:", s3Err);
     }
 
-    return NextResponse.json({ success: true, code, expiresAt, ttlSeconds: 15 * 60 });
+    return NextResponse.json({
+      success: true,
+      code,
+      expiresAt,
+      ttlSeconds: 15 * 60,
+      type: entry.type,
+      textContent: entry.textContent,
+    });
   } catch (error) {
     console.error("Code generation error:", error);
     return NextResponse.json({ error: (error as Error).message }, { status: 500 });
@@ -139,5 +152,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     fileSize: entry.fileSize,
     mimeType: entry.mimeType,
     expiresAt: entry.expiresAt,
+    type: entry.type || (entry.textContent ? "text" : "file"),
+    textContent: entry.textContent || "",
   });
 }
